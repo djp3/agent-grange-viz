@@ -32,8 +32,8 @@ final class FirstClickTerminalView: LocalProcessTerminalView {
 /// SwiftTerm view. Everything the viewer does still happens in Python; this file only
 /// provides the window, the pty and the menus.
 ///
-/// Unlike agent-farm and agent-frolic there is no Sparkle here yet: this build is made and
-/// run on the same Mac, signed ad-hoc, and does not update itself.
+/// Unlike agent-farm and agent-frolic there is no Sparkle here yet: the app does not update
+/// itself, and a new release is a new download.
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, LocalProcessTerminalViewDelegate {
     /// The bundle's release number ("0.1.0"); the viewer gets it as AGENT_GRANGE_VIZ_VERSION.
     private let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String

@@ -5,8 +5,8 @@
 // PyInstaller-built Python TUI (agent-grange-viz-core).
 // scripts/build_app.sh builds this and assembles dist/agent-grange-viz.app around it.
 //
-// There is no Sparkle here yet, unlike agent-farm and agent-frolic: this first cut is built
-// and run on the Mac it was built on, and does not update itself (see README.md).
+// There is no Sparkle here yet, unlike agent-farm and agent-frolic: the app does not update
+// itself, and a new release is a new download (see README.md).
 import PackageDescription
 
 let package = Package(

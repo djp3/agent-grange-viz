@@ -1,24 +1,24 @@
 #!/bin/bash
 # Copyright (C) 2026 Don Patterson
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Sign an assembled agent-grange-viz.app inside-out, ad-hoc: for a build that runs on the
-# Mac it was made on.
-#   scripts/sign_app.sh dist/agent-grange-viz.app
-#
-# An ad-hoc signature names nobody. It is enough for macOS to run the app where it was
-# built (Apple silicon runs nothing unsigned), and not enough to hand the app to anyone
-# else: another Mac's Gatekeeper refuses it. A copy to give away needs what agent-frolic's
-# scripts/sign_app.sh and scripts/release.sh do and this does not yet: a Developer ID
-# Application certificate, the hardened runtime (--options runtime --timestamp, and for the
-# Python entry executable an entitlements file if anything in it then needs executable
-# memory), and Apple's notarization.
+# Sign an assembled agent-grange-viz.app inside-out.
+#   scripts/sign_app.sh dist/agent-grange-viz.app "Developer ID Application: Name (TEAMID)"
+#   scripts/sign_app.sh dist/agent-grange-viz.app -          # ad-hoc, for local builds
+#   scripts/sign_app.sh dist/agent-grange-viz.app            # the same
 set -euo pipefail
-APP=${1:?usage: sign_app.sh <app>}
+APP=${1:?usage: sign_app.sh <app> [identity]}
+IDENTITY=${2:--}
 cd "$(dirname "$0")/.."
 
-# Plainly, with no hardened runtime: an ad-hoc signature carries no team, so an ad-hoc
-# hardened-runtime app could not load its own libraries.
-sign() { codesign --force --sign - "$@" 2> >(grep -v "replacing existing signature" >&2); }
+# Developer ID builds get the hardened runtime (notarization requires it); the Python tree is
+# signed by the same team, so library validation passes, and no entitlement is asked for:
+# nothing in the app needs executable memory or anyone else's libraries. An ad-hoc signature
+# names nobody and carries no team, so an ad-hoc hardened-runtime app could not load its own
+# libraries: those builds are signed plainly instead. They run on the Mac that made them,
+# and another Mac's Gatekeeper refuses them.
+opts=(--force)
+[ "$IDENTITY" != "-" ] && opts+=(--options runtime --timestamp)
+sign() { codesign "${opts[@]}" --sign "$IDENTITY" "$@" 2> >(grep -v "replacing existing signature" >&2); }
 
 CORE="$APP/Contents/Resources/agent-grange-viz-core"
 
@@ -36,4 +36,8 @@ sign "$CORE/agent-grange-viz-core"
 # 3. The app itself.
 sign "$APP"
 codesign --verify --deep --strict "$APP"
-echo "signed $APP ad-hoc"
+if [ "$IDENTITY" = "-" ]; then
+    echo "signed $APP ad-hoc"
+else
+    echo "signed $APP with: $IDENTITY"
+fi

@@ -14,8 +14,8 @@ It is designed to work with [agent-farm](https://github.com/djp3/agent-farm),
 [agent-frolic](https://github.com/djp3/agent-frolic): see
 [below](#made-to-work-with-agent-farm-agent-grange-and-agent-frolic).
 
-There is no download yet. It is built from this repository, for the Mac it is built on:
-see [Install](#install). macOS 27+ on Apple silicon · free and open source
+**[Download for Mac](https://github.com/djp3/agent-grange-viz/releases/latest)** · macOS 27+ on
+Apple silicon · free and open source
 
 <!-- docs/screenshot.png goes here once there is one: the window on the demo, mid-loop -->
 
@@ -56,23 +56,17 @@ Docker.
 
 ## Install
 
-There is no release to download. Build the app from a checkout:
+1. Download `agent-grange-viz-<version>.zip` from the
+   [latest release](https://github.com/djp3/agent-grange-viz/releases/latest), unzip it and
+   drag `agent-grange-viz.app` to Applications.
+2. Open it. The app is notarized, so it opens like any other download.
 
-```sh
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt -r requirements-build.txt
-scripts/build_app.sh                 # makes dist/agent-grange-viz.app
-open dist/agent-grange-viz.app
-```
+The app does not update itself yet: a new release is a new download from the same page.
 
-You need macOS 27 (Golden Gate) or later on Apple silicon, Python 3.14, and Xcode's command
-line tools (for `swift build`). The app is signed ad-hoc, which is enough to run it on the Mac
-that built it and not enough to give it to someone else: it is not notarized, and another Mac
-will refuse it. It does not update itself either: pull, and build again.
+You need macOS 27 (Golden Gate) or later on Apple silicon.
 
 **On macOS 26 (Tahoe) or earlier?** The Mac app needs macOS 27, as agent-farm and
-agent-frolic do, so it can't run on an earlier macOS. `scripts/build_app.sh` says so there
-and builds nothing, and macOS will refuse to open a copy built on another Mac and say it
+agent-frolic do, so it can't run on an earlier macOS. macOS will refuse to open it and say it
 needs macOS 27.0 or later. The viewer itself doesn't need macOS 27, so you can run it from
 source in a terminal instead. Install Python 3.14 (python.org's installer runs on earlier
 macOS versions), then:
@@ -249,7 +243,11 @@ either raise the minimum in both files and here, or build with a Python made for
 systems (python.org's installer).
 
 `scripts/build_app.sh` builds the Mac app: PyInstaller makes the Python side, `swift build`
-the window, and the result is signed ad-hoc. `requirements.lock` pins everything with hashes,
+the window, and the result is signed ad-hoc, which is enough to run it on the Mac that built
+it (it needs Python 3.14 and Xcode's command line tools, and says so and builds nothing on a
+macOS before 27). `scripts/release.sh` cuts a release: the same build from the lock, signed
+with a Developer ID under the hardened runtime, notarized by Apple, stapled, zipped, tagged
+`v<VERSION>` and published on GitHub with the notes in `release-notes/`. `requirements.lock` pins everything with hashes,
 and `scripts/locked_venv.sh` makes a virtual environment holding exactly that. The icon is
 drawn in `macos/Resources/icon.svg`; `scripts/render_icon.sh` renders it (it needs
 `rsvg-convert`), and a build only checks that the rendering is current.

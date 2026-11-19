@@ -6,16 +6,17 @@
 #   2. SwiftPM release build of the host app     -> macos/.build/release/AgentGrangeViz
 #   3. assemble the bundle (binary, the Python tree, icon, Info.plist), and check that
 #      nothing in it needs a newer macOS than Info.plist says
-#   4. sign it ad-hoc
+#   4. sign it: ad-hoc, or with CODESIGN_IDENTITY="Developer ID Application: …" (or that
+#      certificate's hash) and the hardened runtime, as scripts/release.sh does
 #   5. ask the signed copy to check itself, once main.py knows how (--selfcheck)
 # Needs: .venv with requirements.txt + requirements-build.txt (or PYTHON=<the python of
 # another venv, such as the one scripts/locked_venv.sh makes>), Xcode command line tools.
 # The version comes from VERSION and is used for both CFBundleShortVersionString and
 # CFBundleVersion.
 #
-# This builds an app for the Mac it is built on, and that is all there is so far. Unlike
-# agent-farm and agent-frolic there is no Developer ID signature, no notarization, no
-# Sparkle and no release script: the app does not leave this Mac and does not update itself.
+# By itself this builds an app for the Mac it is built on. scripts/release.sh builds the one
+# that leaves it: signed with a Developer ID, notarized, and published. Unlike agent-farm
+# and agent-frolic there is no Sparkle: the app does not update itself.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -93,7 +94,7 @@ step "macOS minimum"
 scripts/check_macos_minimum.sh "$APP"
 
 step "sign"
-scripts/sign_app.sh "$APP"
+scripts/sign_app.sh "$APP" "${CODESIGN_IDENTITY:--}"
 
 step "self-check of the signed copy"
 # The packaged copy proves it is whole by starting without a screen and drawing once, with
