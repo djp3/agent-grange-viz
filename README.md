@@ -65,10 +65,24 @@ scripts/build_app.sh                 # makes dist/agent-grange-viz.app
 open dist/agent-grange-viz.app
 ```
 
-You need macOS 27 or later on Apple silicon, Python 3.14, and Xcode's command line tools (for
-`swift build`). The app is signed ad-hoc, which is enough to run it on the Mac that built it
-and not enough to give it to someone else: it is not notarized, and another Mac will refuse
-it. It does not update itself either: pull, and build again.
+You need macOS 27 (Golden Gate) or later on Apple silicon, Python 3.14, and Xcode's command
+line tools (for `swift build`). The app is signed ad-hoc, which is enough to run it on the Mac
+that built it and not enough to give it to someone else: it is not notarized, and another Mac
+will refuse it. It does not update itself either: pull, and build again.
+
+**On macOS 26 (Tahoe) or earlier?** The Mac app needs macOS 27, as agent-farm and
+agent-frolic do, so it can't run on an earlier macOS. `scripts/build_app.sh` says so there
+and builds nothing, and macOS will refuse to open a copy built on another Mac and say it
+needs macOS 27.0 or later. The viewer itself doesn't need macOS 27, so you can run it from
+source in a terminal instead. Install Python 3.14 (python.org's installer runs on earlier
+macOS versions), then:
+
+    git clone https://github.com/djp3/agent-grange-viz.git && cd agent-grange-viz
+    python3.14 -m venv .venv && .venv/bin/pip install -r requirements.txt
+    .venv/bin/python main.py
+
+Run that way, it has no window or menus of its own (`--demo` and `--port N` stand in for the
+Viewer menu), `git pull` brings it up to date, and its settings and log stay in that folder.
 
 To watch something real you also need a grange running on this Mac
 ([agent-grange](https://github.com/djp3/agent-grange): `cd docker && make up`). Without one
@@ -223,6 +237,16 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt -r requiremen
 .venv/bin/python main.py --demo      # a made-up team, every row filled
 .venv/bin/python -m pytest           # the tests: no network, no real settings
 ```
+
+**The minimum macOS is 27**, declared in `macos/Info.plist` (`LSMinimumSystemVersion`, which
+Finder checks before it opens the app) and in `macos/Package.swift`; a test keeps the two the
+same. `scripts/build_app.sh` stops at once on an earlier macOS and says what works there. On
+macOS 27 the bundled Python agrees with the declaration: it is Homebrew's, which Homebrew
+builds for the macOS it runs on, so nearly every part of the Python tree records macOS 27 as
+its minimum. When the build Mac moves to a newer macOS and Homebrew's Python follows,
+`scripts/check_macos_minimum.sh` stops the build and lists the files that need more; then
+either raise the minimum in both files and here, or build with a Python made for older
+systems (python.org's installer).
 
 `scripts/build_app.sh` builds the Mac app: PyInstaller makes the Python side, `swift build`
 the window, and the result is signed ad-hoc. `requirements.lock` pins everything with hashes,

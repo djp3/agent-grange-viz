@@ -12,14 +12,20 @@ set -euo pipefail
 APP=${1:?usage: check_macos_minimum.sh <app> [minimum]}
 MIN=${2:-$(/usr/libexec/PlistBuddy -c "Print :LSMinimumSystemVersion" "$APP/Contents/Info.plist")}
 
-# Whether version $1 is newer than version $2, comparing dotted numbers ("26.0" < "27.0").
-newer() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" = "$1" ]; }
+# Whether version $1 is newer than version $2, comparing dotted numbers: "26.0" < "27.0", and
+# "27" is "27.0" is "27.0.0".
+norm() { awk -F. '{ printf "%d.%d.%d", $1, $2, $3 }' <<< "$1"; }
+newer() {
+    local a b
+    a=$(norm "$1") b=$(norm "$2")
+    [ "$a" != "$b" ] && [ "$(printf '%s\n%s\n' "$a" "$b" | sort -V | tail -1)" = "$a" ]
+}
 
 checked=0 over=0
 while IFS= read -r -d '' f; do
     file -b "$f" | grep -q "Mach-O" || continue
     # A universal file records one minimum per architecture: the highest one counts.
-    needs=$(otool -l "$f" 2>/dev/null | awk '/LC_BUILD_VERSION|LC_VERSION_MIN_MACOSX/ {c=1}
+    needs=$(otool -arch all -l "$f" 2>/dev/null | awk '/LC_BUILD_VERSION|LC_VERSION_MIN_MACOSX/ {c=1}
                                          c && ($1=="minos" || $1=="version") {print $2; c=0}' | sort -V | tail -1)
     [ -n "$needs" ] || continue
     checked=$((checked + 1))

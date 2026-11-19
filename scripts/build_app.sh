@@ -26,6 +26,23 @@ CORE=agent-grange-viz-core
 
 step() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 
+# The app this builds opens only on the macOS that macos/Info.plist names, or a later one. On
+# an earlier macOS say so before building anything, and say what does work there.
+# (MACOS_VERSION= stands in for this Mac's, for the tests.)
+NEEDS=$(/usr/libexec/PlistBuddy -c "Print :LSMinimumSystemVersion" macos/Info.plist)
+HAS=${MACOS_VERSION:-$(sw_vers -productVersion)}
+if [ "$(printf '%s\n%s\n' "$NEEDS" "$HAS" | sort -V | head -1)" != "$NEEDS" ]; then
+    printf '%s\n' \
+        "agent-grange-viz.app needs macOS ${NEEDS%.0} or later, and this Mac runs macOS $HAS." \
+        "" \
+        "macOS would refuse to open the app here, so nothing was built." \
+        "" \
+        "The viewer itself does not need macOS ${NEEDS%.0}. Run it in a terminal instead:" \
+        "    .venv/bin/python main.py" \
+        "See \"On macOS 26 (Tahoe) or earlier?\" in README.md." >&2
+    exit 1
+fi
+
 if [ "${SKIP_PYTHON:-0}" = 1 ] && [ -x dist/python/$CORE/$CORE ]; then
     step "python core: reusing dist/python/$CORE (SKIP_PYTHON=1)"
 else
