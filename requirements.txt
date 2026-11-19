@@ -1,0 +1,8 @@
+# Runtime dependencies, pinned exactly. Upgrade deliberately: bump here, then
+#   .venv/bin/pip-compile --generate-hashes --strip-extras --allow-unsafe \
+#       -o requirements.lock requirements.txt requirements-build.txt
+# so builds made from the lock move with it (scripts/locked_venv.sh makes a venv holding
+# exactly what the lock names, each file checked against its hash).
+# Textual is all there is: the grange's API and the Docker socket are read with the
+# standard library.
+textual==8.2.8

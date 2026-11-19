@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The agent-grange-viz app icon at 16 and 32 px. At those sizes the hall and the ring of
+  six lights (icon.svg) run together, so the two small sizes are made from this: three
+  granges and the lines between them, two green and one red, on the same dark rounded
+  square. Drawn here whole, like the large one: nothing of anybody else's in it.
+
+  The build uses icon-small.png, which is this drawing at 1024 px. After a change, render
+  it again with scripts/render_icon.sh.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <rect x="92.16" y="92.16" width="839.68" height="839.68" rx="187.8" fill="#15171c"/>
+  <path d="M512 300 L290 700 H734 Z" fill="none" stroke="#19a9b0" stroke-width="72" stroke-linejoin="round"/>
+  <g stroke="#15171c" stroke-width="30">
+    <circle cx="512" cy="300" r="128" fill="#0ca30c"/>
+    <circle cx="290" cy="700" r="128" fill="#0ca30c"/>
+    <circle cx="734" cy="700" r="128" fill="#d03b3b"/>
+  </g>
+</svg>

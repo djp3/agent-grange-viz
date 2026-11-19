@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The agent-grange-viz app icon. A grange is the hall a farming community meets in, and
+  agent-grange is how a team's farms keep each other told: the hall stands in the middle, and
+  around it the ring the granges gossip on, each grange a light. Most are green; one is
+  yellow and one is red, because telling which one is the app's whole job. One stretch of
+  the ring is dashed violet: a peer reached through the relay instead of directly.
+
+  It sits on the dark rounded square agent-farm's and agent-frolic's icons also sit on, the
+  same size (840 px of the 1024) and plain arcs for corners. The barn's colors are the ones
+  agent-frolic's barn is painted in; the lights and the ring are the viewer's own colors
+  (theme.py). Everything here is drawn in this file: there is no picture beside it and
+  nothing of anybody else's in it, so it is under the same license as the code and needs no
+  credits.
+
+  The build uses icon.png, which is this drawing at 1024 px. After a change, render it
+  again with scripts/render_icon.sh, the one place that says how.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="wall" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f0604f"/>
+      <stop offset="1" stop-color="#b82b24"/>
+    </linearGradient>
+    <linearGradient id="door" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#b93027"/>
+      <stop offset="1" stop-color="#8e1f1b"/>
+    </linearGradient>
+    <linearGradient id="trim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#dfe4ea"/>
+    </linearGradient>
+    <linearGradient id="roof" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#dfe6ee"/>
+      <stop offset="1" stop-color="#8d99a8"/>
+    </linearGradient>
+    <linearGradient id="shine" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#fff" stop-opacity=".20"/>
+      <stop offset=".6" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="good" cx=".38" cy=".34" r=".75">
+      <stop offset="0" stop-color="#4fd84f"/>
+      <stop offset="1" stop-color="#0ca30c"/>
+    </radialGradient>
+    <radialGradient id="warn" cx=".38" cy=".34" r=".75">
+      <stop offset="0" stop-color="#ffe9a0"/>
+      <stop offset="1" stop-color="#fab219"/>
+    </radialGradient>
+    <radialGradient id="crit" cx=".38" cy=".34" r=".75">
+      <stop offset="0" stop-color="#f07a6c"/>
+      <stop offset="1" stop-color="#d03b3b"/>
+    </radialGradient>
+    <filter id="drop" x="-30%" y="-30%" width="160%" height="170%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="10"/>
+      <feOffset dy="12" result="b"/>
+      <feComponentTransfer>
+        <feFuncA type="linear" slope=".45"/>
+      </feComponentTransfer>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="16"/>
+    </filter>
+    <!-- The hall's wall, whole: its outline is written here once. It is the wall's fill, and
+         it clips the boards and the shine drawn on the wall. -->
+    <path id="wallshape" d="M372 690 V508 L416 428 L512 368 L608 428 L652 508 V690 Z"/>
+    <clipPath id="wallclip">
+      <use href="#wallshape"/>
+    </clipPath>
+  </defs>
+
+  <rect x="92.16" y="92.16" width="839.68" height="839.68" rx="187.8" fill="#15171c"/>
+
+  <!-- The mesh: two of the hash-picked neighbour lines behind the hall, then the ring. -->
+  <g fill="none" stroke-linecap="round">
+    <path d="M512 182 L797.8 677 M226.2 347 L797.8 347 M226.2 677 L512 182" stroke="#19a9b0" stroke-width="9"
+          opacity=".28"/>
+    <circle cx="512" cy="512" r="330" stroke="#19a9b0" stroke-width="16"/>
+    <!-- the stretch from the node at four o'clock to the one at six: relayed -->
+    <path d="M797.8 677 A330 330 0 0 1 512 842" stroke="#15171c" stroke-width="20"/>
+    <path d="M797.8 677 A330 330 0 0 1 512 842" stroke="#9584e5" stroke-width="16" stroke-dasharray="6 34"/>
+  </g>
+
+  <!-- The grange hall. -->
+  <g filter="url(#drop)">
+    <use href="#wallshape" fill="url(#wall)"/>
+    <g clip-path="url(#wallclip)">
+      <g stroke="#8e1f1b" stroke-width="3" opacity=".35">
+        <path d="M402 360 V700 M432 360 V700 M462 360 V700 M492 360 V700 M532 360 V700 M562 360 V700 M592 360 V700 M622 360 V700"/>
+      </g>
+      <rect x="372" y="360" width="280" height="340" fill="url(#shine)"/>
+    </g>
+    <!-- loft window -->
+    <rect x="484" y="430" width="56" height="56" rx="5" fill="#2a2f38" stroke="url(#trim)" stroke-width="10"/>
+    <path d="M512 430 V486 M484 458 H540" stroke="url(#trim)" stroke-width="6"/>
+    <!-- the doors, with their cross braces -->
+    <rect x="452" y="552" width="120" height="138" fill="url(#door)" stroke="url(#trim)" stroke-width="10"/>
+    <path d="M512 552 V690 M452 552 L512 690 M512 552 L452 690 M512 552 L572 690 M572 552 L512 690"
+          stroke="url(#trim)" stroke-width="7" stroke-linejoin="round" fill="none"/>
+    <!-- the roof: a gambrel, drawn as one thick line -->
+    <path d="M350 524 L402 420 L512 350 L622 420 L674 524" fill="none" stroke="url(#roof)" stroke-width="28"
+          stroke-linejoin="round" stroke-linecap="round"/>
+    <!-- the sill -->
+    <rect x="356" y="686" width="312" height="16" rx="6" fill="#7c8794"/>
+  </g>
+
+  <!-- The granges on the ring. A dark edge sets each light off from the line it sits on. -->
+  <g stroke="#15171c" stroke-width="12">
+    <circle cx="512" cy="182" r="46" fill="url(#good)"/>
+    <circle cx="797.8" cy="347" r="46" fill="url(#good)"/>
+    <circle cx="226.2" cy="677" r="46" fill="url(#good)"/>
+    <circle cx="226.2" cy="347" r="46" fill="url(#good)"/>
+  </g>
+  <circle cx="797.8" cy="677" r="60" fill="#fab219" opacity=".35" filter="url(#glow)"/>
+  <circle cx="512" cy="842" r="60" fill="#d03b3b" opacity=".45" filter="url(#glow)"/>
+  <g stroke="#15171c" stroke-width="12">
+    <circle cx="797.8" cy="677" r="46" fill="url(#warn)"/>
+    <circle cx="512" cy="842" r="46" fill="url(#crit)"/>
+  </g>
+</svg>

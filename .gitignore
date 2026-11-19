@@ -1,0 +1,18 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.DS_Store
+
+# scratch work: the design mock-ups and their shared simulation
+mockup/
+
+# What the app writes next to the code when run from a checkout.
+settings.json
+*.tmp
+logs/
+
+# packaging output (scripts/build_app.sh)
+build/
+dist/
+macos/.build/
+macos/Resources/AppIcon.icns

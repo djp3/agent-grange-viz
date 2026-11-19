@@ -1,0 +1,1584 @@
+openapi: 3.1.0
+info:
+  title: agent-grange local API
+  version: 1.1.0-proposal
+  summary: The grange's loopback API as it is today, plus the read-only mesh routes agent-grange-viz needs.
+  license:
+    name: GPL-3.0-or-later
+    identifier: GPL-3.0-or-later
+  description: |
+    One grange runs on each developer's machine, beside a Tailscale sidecar. This document
+    describes the API it serves on `127.0.0.1:${GRANGE_PORT}`.
+
+    Every operation carries `x-status`:
+
+    - **`implemented`**: served today (agent-grange `docker/content/grange/api_local.py`).
+      Documented from the code; nothing here asks for a change.
+    - **`proposed`**: to be implemented. Three read-only routes under `/v1/mesh` that let an
+      observability viewer (agent-grange-viz) show the communication plane: who is reachable,
+      by what path, how fresh each record is, what was exchanged and what was refused.
+
+    ## Rules that hold for every route
+
+    - **Loopback only.** Bound to `127.0.0.1` and the container's bridge address that the
+      published port reaches; never to the tailnet, never to all interfaces (R3.3). There is
+      no authentication: any process on the machine may call it, the trust level R9.9 already
+      accepts for `/v1/agents`. The proposed routes reveal the team's tailnet addresses and
+      the mesh topology at that same trust level.
+    - **JSON only**, compact UTF-8. Errors are `{"error": "..."}`.
+    - **Nothing on disk, no history.** The event ring of `/v1/mesh/events` lives in memory and
+      starts empty at each start.
+    - **Ages, not timestamps.** Every `*_age_s`, `*_for_s` and `*_left_s` field is seconds,
+      computed by the serving grange on its monotonic clock when it builds the response
+      (requirements section 5). The two exceptions are inherited from the freshness check:
+      `freshness.last_polled` and the 503 body's `checked` are ISO 8601 times on the grange's
+      own wall clock.
+    - **No protocol change.** `proto` stays 1. The proposed routes read state the grange
+      already holds or can count locally; no new field crosses the tailnet, and gossip
+      behaves exactly as before.
+    - **Privacy.** In `/v1/mesh` an agent list appears as a count only, never as
+      `owner`/`name`/`state`. The viewer has no need for them; `/v1/agents` remains the one
+      place they are served.
+    - **While the image is stale** (the kill-switch tag moved, R5.16) every route, the
+      proposed ones included, answers `503` with the body in `StaleImage`,
+      `Connection: close` and `Retry-After: 60`.
+
+    ## Extensions used on the proposed schemas
+
+    - `x-source`: where the grange already holds the value, as `module.Class.attribute`
+      in `docker/content/grange/` (or `freshness.py` beside it).
+    - `x-new: true`: the value needs new bookkeeping; the description says what.
+    - `x-cost`: a value that is not free to provide, with the cheaper alternative.
+servers:
+  - url: http://127.0.0.1:{port}
+    description: The grange's local API, published by the sidecar on the host's loopback.
+    variables:
+      port:
+        default: "7788"
+        description: GRANGE_PORT
+tags:
+  - name: farm
+    description: agent-farm reports this machine's agents.
+  - name: board
+    description: agent-frolic reads the team's merged picture.
+  - name: health
+    description: Freshness, mesh summary and build metadata.
+  - name: mesh
+    description: Proposed. The communication plane, for an observability viewer. Read-only.
+
+paths:
+  /v1/farm:
+    put:
+      tags: [farm]
+      operationId: putFarm
+      x-status: implemented
+      summary: Farm's complete list of sessions.
+      description: |
+        The body is the complete list farm chooses to report; the grange replaces its agent
+        list with it (R5.1). Farm sends on every change and at least every 30 seconds (R5.2).
+        A list that differs from the previous one, or any push while `farm_stale` is true, is
+        a content change: `rev` and `counter` increase and the record is pushed to the
+        neighbours at once. Two lists are the same when they hold the same entries the same
+        number of times, in any order (R5.3).
+
+        `Content-Length` is required and chunked bodies are refused (400). A declared length
+        over 1 MiB is refused with 413 before anything is read. Unknown fields are dropped,
+        never rejected (R4.4).
+
+        **A viewer must never call this route.**
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FarmPush'
+            examples:
+              two-agents:
+                summary: Two sessions
+                value:
+                  agents:
+                    - {owner: djp3, name: proj-86-pr-98 fix tests, state: busy}
+                    - {owner: djp3, name: proj-12-pr-7 docs, state: idle}
+              nothing:
+                summary: Farm has nothing to report
+                value: {agents: []}
+      responses:
+        '204':
+          description: Accepted. No body.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '503':
+          $ref: '#/components/responses/StaleImage'
+
+  /v1/agents:
+    get:
+      tags: [board]
+      operationId: getAgents
+      x-status: implemented
+      summary: The whole merged picture, long-polled.
+      description: |
+        Always the whole picture, never a difference (R3.7, R5.5): this grange first, then
+        every unexpired peer in order of grange id.
+
+        **Waiting (R5.7, R5.8).** Only an `after` equal to the current cursor waits, up to
+        `wait` seconds, and then answers with the current picture either way. Without
+        `after`, with `after=0`, or with any `after` other than the current cursor (less:
+        something changed; greater: the grange restarted and its cursor began again from 1)
+        the answer is immediate. Clients compare cursors for equality only.
+
+        **What moves the cursor (R5.6).** The local agent list changes; the local
+        `farm_stale` flips; a peer body is accepted with a new `(incarnation, rev)`; a peer
+        expires, leaves or is readmitted. Heartbeats, digest liveness refreshes and the
+        ticking of the age fields do not.
+      parameters:
+        - $ref: '#/components/parameters/after'
+        - $ref: '#/components/parameters/wait'
+      responses:
+        '200':
+          description: The picture.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Picture'
+              examples:
+                team:
+                  summary: This grange and two peers
+                  value:
+                    cursor: 381
+                    grange: djp3
+                    incarnation: 1795040341941
+                    granges:
+                      - grange: djp3
+                        seen_age_s: 0.0
+                        farm_age_s: 7.2
+                        farm_stale: false
+                        agents:
+                          - {owner: djp3, name: proj-86-pr-98 fix tests, state: busy}
+                      - grange: alice
+                        seen_age_s: 0.8
+                        farm_age_s: 12.0
+                        farm_stale: false
+                        agents:
+                          - {owner: alice, name: proj-12-pr-7 docs, state: idle}
+                      - grange: kenji
+                        seen_age_s: 2.4
+                        farm_age_s: 95.0
+                        farm_stale: true
+                        agents: []
+                just-started:
+                  summary: No farm push yet, no peers
+                  value:
+                    cursor: 1
+                    grange: djp3
+                    incarnation: 1795040341941
+                    granges:
+                      - {grange: djp3, seen_age_s: 0.0, farm_age_s: null, farm_stale: false, agents: []}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '503':
+          $ref: '#/components/responses/StaleImage'
+
+  /health:
+    get:
+      tags: [health]
+      operationId: getHealth
+      x-status: implemented
+      summary: Freshness plus the mesh summary.
+      description: |
+        200 while the image is current, 503 with `StaleImage` while it is stale (R5.14). The
+        Docker healthcheck calls this every two seconds.
+      responses:
+        '200':
+          description: The grange is serving.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+              examples:
+                serving:
+                  value:
+                    status: ok
+                    grange: djp3
+                    freshness:
+                      last_polled: '2026-11-18T22:19:41+00:00'
+                      last_summary: image is current (tag agent-grange-latest at bf6e87e)
+                      recheck_seconds: 30.0
+                      polls: 8
+                      consecutive_unchanged_polls: 7
+                    cursor: 381
+                    incarnation: 1795040341941
+                    peers_discovered: 13
+                    peers_live: 11
+                    last_gossip_age_s: 0.8
+                    rejected: {proto: 0, group: 9, identity: 1, overflow: 0}
+                    duplicate_id: false
+                first-seconds:
+                  summary: Before the first poll and the first exchange
+                  value:
+                    status: ok
+                    grange: djp3
+                    freshness:
+                      last_polled: null
+                      last_summary: verified at startup by entrypoint.py; first poll in 30s
+                      recheck_seconds: 30.0
+                      polls: 0
+                      consecutive_unchanged_polls: 0
+                    cursor: 1
+                    incarnation: 1795040341941
+                    peers_discovered: 0
+                    peers_live: 0
+                    last_gossip_age_s: null
+                    rejected: {proto: 0, group: 0, identity: 0, overflow: 0}
+                    duplicate_id: false
+        '503':
+          $ref: '#/components/responses/StaleImage'
+
+  /version:
+    get:
+      tags: [health]
+      operationId: getVersion
+      x-status: implemented
+      summary: The git metadata baked into the image (R5.15).
+      responses:
+        '200':
+          description: Build metadata.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Version'
+              examples:
+                built-by-make:
+                  value: {repo: djp3/agent-grange, branch: main, commit: bf6e87e0c1d2a3b4c5d6e7f8091a2b3c4d5e6f70, dirty: false}
+                built-without-make:
+                  summary: docker compose build, no metadata (such an image refuses to start)
+                  value: {repo: unknown, branch: unknown, commit: unknown, dirty: false}
+        '503':
+          $ref: '#/components/responses/StaleImage'
+
+  /v1/mesh:
+    get:
+      tags: [mesh]
+      operationId: getMesh
+      x-status: proposed
+      summary: One snapshot of the communication plane as this grange sees it.
+      description: |
+        Everything this grange knows about the plane, in one answer: itself, every discovered
+        address with its binding, mark, role, exchange counters, the record held for it and
+        the sidecar's view of it, the forget map, what was refused, and the sidecar itself.
+
+        It answers at once; it does not long-poll. A viewer polls it about once a second and
+        long-polls `/v1/mesh/events` for what happened in between. The answer must be cheap:
+        build it from state already in memory, under the Store's and the Core's locks for as
+        short a time as `/v1/agents` holds them. The sidecar values come from the most recent
+        `status` read (see `tailnet.status_age_s`), not from a call made for this request.
+
+        Agents appear as a count only.
+      responses:
+        '200':
+          description: The snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Mesh'
+              examples:
+                team:
+                  $ref: '#/components/examples/MeshTeam'
+                socket-lost:
+                  $ref: '#/components/examples/MeshSocketLost'
+        '503':
+          $ref: '#/components/responses/StaleImage'
+
+  /v1/mesh/events:
+    get:
+      tags: [mesh]
+      operationId: getMeshEvents
+      x-status: proposed
+      summary: What happened, long-polled from an in-memory ring.
+      description: |
+        Every exchange and every state change, oldest first, from a ring buffer of about 2000
+        entries held in memory. Nothing is written to disk; a restart starts `seq` again
+        from 1.
+
+        **Waiting**, as for `/v1/agents`. Only an `after` equal to the newest `seq` waits, up
+        to `wait` seconds, and then answers either way (possibly with no events). With a
+        smaller `after` the answer is immediate and carries every event with `seq > after`
+        still in the ring. Without `after`, with `after=0`, or with an `after` greater than
+        the newest `seq` (the grange restarted) the answer is immediate and carries the whole
+        ring, newest `limit` entries. A client that finds `first_seq > after + 1` has missed
+        events the ring no longer holds.
+
+        `age_s` is each event's age when the response was built, so a client that wants times
+        subtracts it from its own clock on arrival.
+      parameters:
+        - name: after
+          in: query
+          description: The `seq` the client last saw. Only a value equal to the newest `seq` waits.
+          schema: {type: integer, minimum: 0}
+        - $ref: '#/components/parameters/wait'
+        - name: limit
+          in: query
+          description: At most this many events, the newest ones. Default and maximum 2000.
+          schema: {type: integer, minimum: 1, maximum: 2000, default: 2000}
+      responses:
+        '200':
+          description: Events with `seq` greater than `after`, oldest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeshEvents'
+              examples:
+                forward-once:
+                  $ref: '#/components/examples/EventsForwardOnce'
+                failures:
+                  $ref: '#/components/examples/EventsFailures'
+                nothing-new:
+                  summary: The wait ran out with nothing new
+                  value: {seq: 90219, first_seq: 88220, incarnation: 1795040341941, events: []}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '503':
+          $ref: '#/components/responses/StaleImage'
+
+  /v1/mesh/ping:
+    post:
+      tags: [mesh]
+      operationId: postMeshPing
+      x-status: proposed
+      x-optional: true
+      summary: One disco ping to a peer's sidecar, on demand. Optional.
+      description: |
+        **Optional.** The viewer works without it: `peers[].tailnet.latency_ms` in `/v1/mesh`
+        is enough for a glance. This route lets a user ask for one fresh measurement.
+
+        The grange asks its sidecar for one disco ping
+        (`POST /localapi/v0/ping?ip=<tailnet ip>&type=disco` on the daemon's socket, which a
+        read-only caller is allowed) and relays the answer. It is a POST because it sends
+        packets; it changes nothing in the grange. At most one ping runs at a time and a
+        grange may answer `429` to more than one a second.
+
+        A peer that does not answer within the sidecar's timeout is a `200` with `ok: false`,
+        not an error: that is the measurement.
+      parameters:
+        - name: peer
+          in: query
+          required: true
+          description: A grange id bound to a discovered address, or a discovered address (`ip:port` or `ip`).
+          schema: {type: string, minLength: 1, maxLength: 256}
+          examples:
+            by-id: {value: ivan}
+            by-address: {value: '100.64.0.8:7789'}
+      responses:
+        '200':
+          description: The measurement, or that there was none.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ping'
+              examples:
+                direct:
+                  value: {peer: alice, address: '100.64.0.6:7789', ok: true, latency_ms: 2.9, path: direct, endpoint: '192.168.1.26:41641', derp_region_id: null, derp_region_code: '', error: ''}
+                relayed:
+                  value: {peer: ivan, address: '100.64.0.8:7789', ok: true, latency_ms: 141.2, path: derp, endpoint: '', derp_region_id: 999, derp_region_code: headscale, error: ''}
+                no-answer:
+                  value: {peer: frank, address: '100.64.0.12:7789', ok: false, latency_ms: null, path: null, endpoint: '', derp_region_id: null, derp_region_code: '', error: 'no reply within 5s'}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: No discovered address matches `peer`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unknown:
+                  value: {error: "no discovered address matches 'zed'"}
+        '429':
+          description: A ping is already running, or the last one was less than a second ago.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                busy:
+                  value: {error: one ping at a time}
+        '502':
+          description: The sidecar's LocalAPI did not answer (the state `tailnet.reachable` is false).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                socket:
+                  value: {error: 'tailscaled LocalAPI /localapi/v0/ping: [Errno 111] Connection refused'}
+        '503':
+          $ref: '#/components/responses/StaleImage'
+
+components:
+  parameters:
+    after:
+      name: after
+      in: query
+      description: |
+        The cursor the client last saw. Only a value equal to the current cursor waits.
+        Not a non-negative integer: 400.
+      schema: {type: integer, minimum: 0}
+    wait:
+      name: wait
+      in: query
+      description: |
+        How long to hold the request, in seconds. Default and maximum 30; a larger value is
+        treated as 30, and 0 answers at once. Not a non-negative number: 400.
+      schema: {type: number, minimum: 0, default: 30}
+
+  responses:
+    BadRequest:
+      description: Malformed JSON, a known field of the wrong type, or a bad query parameter (R9.10).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            bad-after:
+              value: {error: after must be a non-negative integer}
+            bad-field:
+              value: {error: 'agents[0].state must be a string'}
+    TooLarge:
+      description: A size or count limit was exceeded (R4.3, R5.1). The connection is closed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            body:
+              value: {error: body of 2097152 bytes exceeds the 1048576-byte limit}
+            agents:
+              value: {error: agents has 201 entries; at most 200}
+    StaleImage:
+      description: |
+        The image is out of date: the kill-switch tag has moved past the commit this image
+        was built from (R5.16, R6.18). Every route answers this until a rebuilt container
+        replaces this one. The grange has also stopped sending gossip.
+      headers:
+        Retry-After:
+          description: Always 60.
+          schema: {type: string}
+        Connection:
+          description: Always `close`.
+          schema: {type: string}
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/StaleImage'
+          examples:
+            tag-moved:
+              value:
+                error: image out of date
+                summary: 'image bf6e87e is behind tag agent-grange-latest (c0ffee1): 3 commits'
+                details:
+                  - built from bf6e87e0c1d2a3b4c5d6e7f8091a2b3c4d5e6f70
+                  - tag agent-grange-latest is at c0ffee1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b
+                built_commit: bf6e87e0c1d2a3b4c5d6e7f8091a2b3c4d5e6f70
+                tag: agent-grange-latest
+                tag_commit: c0ffee1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b
+                fix: make update   (git pull --ff-only, then make up)
+                checked: '2026-11-18T22:31:07+00:00'
+
+  schemas:
+    # ------------------------------------------------------------------ implemented
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: {type: string}
+
+    Agent:
+      type: object
+      description: |
+        One Claude Code session as farm sees it (requirements 4.1). `state` is farm's own
+        vocabulary, passed through unchanged. Each string is at most 256 bytes of UTF-8.
+      required: [owner, name, state]
+      properties:
+        owner: {type: string, description: The human the session belongs to.}
+        name: {type: string, description: The session's name; frolic ties it to a pull request from this.}
+        state: {type: string, description: Opaque to the grange.}
+
+    FarmPush:
+      type: object
+      required: [agents]
+      properties:
+        agents:
+          type: array
+          maxItems: 200
+          items:
+            $ref: '#/components/schemas/Agent'
+
+    GrangeEntry:
+      type: object
+      required: [grange, seen_age_s, farm_age_s, farm_stale, agents]
+      properties:
+        grange: {type: string, description: The grange id.}
+        seen_age_s:
+          type: number
+          minimum: 0
+          description: Since this grange last refreshed that peer's liveness, by body or digest (R5.9). 0.0 for the local grange. Rounded to 0.1.
+        farm_age_s:
+          type: [number, 'null']
+          minimum: 0
+          description: Since that grange's farm last pushed, as relayed plus the time since it was received. Null until the first push.
+        farm_stale:
+          type: boolean
+          description: The origin's own flag (R6.3), relayed unchanged.
+        agents:
+          type: array
+          items:
+            $ref: '#/components/schemas/Agent'
+
+    Picture:
+      type: object
+      required: [cursor, grange, incarnation, granges]
+      properties:
+        cursor: {type: integer, minimum: 1, description: 'Local; starts again from 1 at each start. Compare for equality only.'}
+        grange: {type: string, description: This grange's id.}
+        incarnation: {type: integer, description: 'Chosen at start (milliseconds); also changes on an incarnation correction (R4.8).'}
+        granges:
+          type: array
+          minItems: 1
+          description: The local grange first, then the others in order of grange id.
+          items:
+            $ref: '#/components/schemas/GrangeEntry'
+
+    Freshness:
+      type: object
+      description: The running half of the kill-switch check (freshness_watch.FreshnessState.snapshot).
+      required: [last_polled, last_summary, recheck_seconds, polls, consecutive_unchanged_polls]
+      properties:
+        last_polled:
+          type: [string, 'null']
+          format: date-time
+          description: When the tag was last polled, on the grange's own clock. Null until the first poll.
+        last_summary: {type: string, description: One line from the last check.}
+        recheck_seconds: {type: number, description: RECHECK_SECONDS.}
+        polls: {type: integer, minimum: 0}
+        consecutive_unchanged_polls: {type: integer, minimum: 0, description: Conditional requests answered 304 in a row.}
+
+    Rejected:
+      type: object
+      description: Incoming gossip refused, by reason, since start.
+      required: [proto, group, identity, overflow]
+      properties:
+        proto: {type: integer, minimum: 0, description: '409, another protocol version (R5.11).'}
+        group: {type: integer, minimum: 0, description: '409, another GRANGE_GROUP (R5.11).'}
+        identity: {type: integer, minimum: 0, description: '403, not a tailnet source or not a tagged grange (R5.12, R5.13).'}
+        overflow: {type: integer, minimum: 0, description: '413 over the caps, plus ids ignored beyond the record cap (R5.17).'}
+
+    Health:
+      type: object
+      required: [status, grange, freshness, cursor, incarnation, peers_discovered, peers_live, last_gossip_age_s, rejected, duplicate_id]
+      properties:
+        status: {const: ok}
+        grange: {type: string}
+        freshness:
+          $ref: '#/components/schemas/Freshness'
+        cursor: {type: integer, minimum: 1}
+        incarnation: {type: integer}
+        peers_discovered: {type: integer, minimum: 0, description: Tagged addresses in the sidecar's peer list.}
+        peers_live: {type: integer, minimum: 0, description: The live set of R6.10.}
+        last_gossip_age_s:
+          type: [number, 'null']
+          minimum: 0
+          description: Since the last successful exchange in either direction. Null until the first.
+        rejected:
+          $ref: '#/components/schemas/Rejected'
+        duplicate_id: {type: boolean, description: Another grange appears to run with this id (R4.8).}
+
+    Version:
+      type: object
+      required: [repo, branch, commit, dirty]
+      properties:
+        repo: {type: string, description: 'owner/name from remote.origin.url, or "unknown".'}
+        branch: {type: string, description: Informational.}
+        commit: {type: string, description: 'git rev-parse HEAD at build, or "unknown".'}
+        dirty: {type: boolean, description: The build directory had uncommitted changes.}
+
+    StaleImage:
+      type: object
+      required: [error, summary, details, built_commit, tag, tag_commit, fix, checked]
+      properties:
+        error: {const: image out of date}
+        summary: {type: string}
+        details:
+          type: array
+          items: {type: string}
+        built_commit: {type: string}
+        tag: {type: string, description: CHECK_TAG.}
+        tag_commit: {type: [string, 'null'], description: 'The commit the tag resolved to, when known.'}
+        fix: {type: string, description: What to run.}
+        checked: {type: [string, 'null'], format: date-time, description: When the poll that found it ran.}
+
+    # ------------------------------------------------------------------ proposed
+    SentCounts:
+      type: object
+      description: Gossip requests this grange started, by kind.
+      required: [push, repair, probe]
+      properties:
+        push: {type: integer, minimum: 0}
+        repair: {type: integer, minimum: 0}
+        probe: {type: integer, minimum: 0, description: Repairs to an address outside the live set (R6.10).}
+
+    RecvCounts:
+      type: object
+      description: Accepted gossip requests from an address, by kind.
+      required: [push, repair]
+      properties:
+        push: {type: integer, minimum: 0}
+        repair: {type: integer, minimum: 0}
+
+    Role:
+      type: string
+      enum: [successor, neighbour, pool, outside]
+      description: |
+        The address's place in R6.10, for this grange, now.
+        `successor`: the first of the neighbours, the next live address after this grange's
+        own in byte order. `neighbour`: one of the other FANOUT - 1 hash-ranked picks.
+        `pool`: live but not a neighbour, so a candidate for the repair every REPAIR_SECONDS.
+        `outside`: not in the live set; only the probe tries it.
+
+    MeshRecord:
+      type: object
+      description: The record held for an id (state.Store._peers[id]). Agents as a count only.
+      required: [incarnation, rev, counter, seen_age_s, farm_age_s, farm_stale, leaving, agents, held_for_s, admitted]
+      properties:
+        incarnation:
+          type: integer
+          x-source: state.Store._peers[id].body.incarnation
+        rev:
+          type: integer
+          minimum: 1
+          description: Content version.
+          x-source: state.Store._peers[id].body.rev
+        counter:
+          type: integer
+          minimum: 1
+          description: Liveness version as stored here, which may be later than the body's.
+          x-source: state.Store._peers[id].counter
+        seen_age_s:
+          type: number
+          minimum: 0
+          description: The same value `/v1/agents` gives.
+          x-source: now - state.Store._peers[id].seen_at
+        farm_age_s:
+          type: [number, 'null']
+          minimum: 0
+          x-source: state.Store._peers[id].farm_age_s + (now - farm_age_at)
+        farm_stale:
+          type: boolean
+          x-source: state.Store._peers[id].body.farm_stale
+        leaving:
+          type: boolean
+          description: Always false in practice, since a leaving body removes the record; here so the record is whole.
+          x-source: state.Store._peers[id].body.leaving
+        agents:
+          type: integer
+          minimum: 0
+          description: How many agents the record carries. Never their owner, name or state.
+          x-source: len(state.Store._peers[id].body.agents)
+        held_for_s:
+          type: number
+          minimum: 0
+          description: Since this incarnation of the record was first accepted here.
+          x-new: true
+          x-source: 'new: a monotonic time kept in _Peer, set where _apply_body creates the _Peer or takes a greater incarnation'
+        admitted:
+          type: string
+          enum: [first, restart, readmit]
+          description: |
+            How the record came to be held: `first`, the first body ever seen for the id;
+            `restart`, a greater incarnation replaced or followed an earlier one (R6.7);
+            `readmit`, the same incarnation returned after it had expired or left (R6.6).
+          x-new: true
+          x-source: 'new: decided in state.Store._apply_body from _peers and _forget, kept in _Peer'
+
+    PeerTailnet:
+      type: object
+      description: The local sidecar's view of the peer device, from its last `status` read.
+      required: [online, active, cur_addr, relay, rx, tx, last_handshake_age_s, latency_ms, latency_age_s]
+      properties:
+        online:
+          type: boolean
+          description: Headscale's hint as of the last `status` read. Equal to `hint` when both come from the same read.
+          x-source: discovery.TailscaleDiscovery.api.status()["Peer"][key]["Online"]
+        active:
+          type: boolean
+          description: |
+            The daemon has a live session with the peer. With `active` true, a non-empty
+            `cur_addr` means the path is direct and an empty one means it is relayed through
+            DERP; with `active` false there is no path in use to speak of.
+          x-source: status()["Peer"][key]["Active"]
+        cur_addr:
+          type: string
+          description: The peer's UDP endpoint when the path is direct; empty when it is relayed through DERP or idle.
+          x-source: status()["Peer"][key]["CurAddr"]
+        relay:
+          type: string
+          description: The DERP region code the peer is reached through when relayed (its home relay).
+          x-source: status()["Peer"][key]["Relay"]
+        rx:
+          type: integer
+          minimum: 0
+          description: Bytes received from it over WireGuard.
+          x-source: status()["Peer"][key]["RxBytes"]
+        tx:
+          type: integer
+          minimum: 0
+          x-source: status()["Peer"][key]["TxBytes"]
+        last_handshake_age_s:
+          type: [number, 'null']
+          minimum: 0
+          description: Since the last WireGuard handshake. Null when there has been none (the daemon reports the zero time).
+          x-source: status_read_at - status()["Peer"][key]["LastHandshake"], plus the time since that read
+        latency_ms:
+          type: [number, 'null']
+          minimum: 0
+          description: Round trip of the grange's last disco ping to it. Null when the grange has not pinged it.
+          x-new: true
+          x-cost: |
+            Not in `status`. Needs an active ping (POST /localapi/v0/ping, read permission is
+            enough): one address per REPAIR_SECONDS, round-robin, is about 100 bytes every 3 s.
+            A grange that prefers not to ping serves null; the viewer then falls back to the
+            `rtt_ms` of exchanges in `/v1/mesh/events`, or to `POST /v1/mesh/ping`.
+          x-source: 'new: LatencySeconds from discovery.LocalAPI ping, kept per address'
+        latency_age_s:
+          type: [number, 'null']
+          minimum: 0
+          description: How long ago that ping was.
+          x-new: true
+          x-source: 'new: beside latency_ms'
+
+    MeshPeer:
+      type: object
+      description: "One discovered address: the gossip core's view, the record held for its id, and the sidecar's view."
+      required: [address, id, hostname, hint, failed, role, last_ok_age_s, last_fail_age_s, last_status, last_fail_status, last_error, fails, sent, recv, bytes_out, bytes_in, lag, record, tailnet]
+      properties:
+        address:
+          type: string
+          description: 'Tailnet `ip:port` (in plain mode, `host:port`). Topology uses addresses; records use ids (R6.19).'
+          x-source: key of gossip.Core.discovered
+        id:
+          type: [string, 'null']
+          description: The grange id bound to the address by the `from` of the last successful exchange, in either direction. Null until there has been one.
+          x-source: gossip.Core.binding.get(address)
+        hostname:
+          type: string
+          description: The sidecar's hostname, `grange-<id>` by convention; a hint only. Empty in plain mode.
+          x-source: discovery.TailscaleDiscovery.hostnames.get(address)
+        hint:
+          type: boolean
+          description: The daemon's online hint as of the last discovery refresh (R6.8).
+          x-source: gossip.Core.discovered[address]
+        failed:
+          type: boolean
+          description: The R6.20 mark. A marked address is outside the live set until a request succeeds, an accepted request arrives from it, or a refresh reports it online.
+          x-source: address in gossip.Core.failed
+        role:
+          $ref: '#/components/schemas/Role'
+          x-source: 'gossip.Core.neighbours() (first is the successor) and gossip.Core.live()'
+        last_ok_age_s:
+          type: [number, 'null']
+          minimum: 0
+          description: Since the last successful exchange with the address, in either direction. Null when there has been none.
+          x-new: true
+          x-source: 'new: per address, set in gossip.Core._on_result (ok) and gossip.Core.on_incoming'
+        last_fail_age_s:
+          type: [number, 'null']
+          minimum: 0
+          description: Since the last request to the address that did not get a 2xx. Null when none has failed.
+          x-new: true
+          x-source: 'new: per address, set in gossip.Core._on_result (not ok)'
+        last_status:
+          type: [integer, 'null']
+          description: |
+            HTTP status of the most recent exchange with the address, success or failure:
+            204 a push, 200 a repair, 409, 403, 413, 503. Null when the most recent one got no
+            answer (timeout, refused connection), and before any.
+          x-new: true
+          x-source: 'new: gossip.Result.status from runtime.HttpTransport.exchange; for incoming, the status api_gossip.GossipApp.handle returned'
+        last_fail_status:
+          type: [integer, 'null']
+          description: HTTP status of the last failed request. Null when it got no answer (a timeout), and when `last_fail_age_s` is null.
+          x-new: true
+          x-source: 'new: gossip.Result.status of the last failure'
+        last_error:
+          type: string
+          description: The `error` text of the last refusal, e.g. "group 'proto-judy' is not 'default'"; "timeout" for no answer; empty when nothing has failed.
+          x-new: true
+          x-cost: runtime.HttpTransport.exchange already reads the reply body; parse `error` from a non-2xx JSON body instead of discarding it.
+          x-source: 'new: from the reply read in runtime.HttpTransport.exchange'
+        fails:
+          type: integer
+          minimum: 0
+          description: Requests to the address that failed, since start.
+          x-new: true
+          x-source: 'new: counted in gossip.Core._on_result'
+        sent:
+          $ref: '#/components/schemas/SentCounts'
+          description: Requests this grange sent to the address, failures included.
+          x-new: true
+          x-source: 'new: gossip.Core._send counts per address what gossip.Core.sent counts in total'
+        recv:
+          $ref: '#/components/schemas/RecvCounts'
+          description: Accepted requests from the address.
+          x-new: true
+          x-source: 'new: counted in api_gossip.GossipApp.handle beside core.on_incoming'
+        bytes_out:
+          type: integer
+          minimum: 0
+          description: Gossip bytes sent to the address, requests and replies to its requests.
+          x-new: true
+          x-source: 'new: len(payload) in runtime.HttpTransport.exchange; the reply size in api_gossip'
+        bytes_in:
+          type: integer
+          minimum: 0
+          x-new: true
+          x-source: 'new: len(data) in runtime.HttpTransport.exchange; len(raw) in api_gossip.GossipApp.handle'
+        lag:
+          type: [integer, 'null']
+          minimum: 0
+          description: At the last repair with the address, how many records it lacked or held older than this grange does (the follow-up push's size). Null before any repair.
+          x-new: true
+          x-source: 'new: len(followup) from state.Store.take_repair_response, or len(_bodies_for(digest)) in answer_repair'
+        record:
+          oneOf:
+            - $ref: '#/components/schemas/MeshRecord'
+            - type: 'null'
+          description: The record held for `id`. Null when `id` is null, and when no unexpired record is held for it (see `forgotten`).
+        tailnet:
+          oneOf:
+            - $ref: '#/components/schemas/PeerTailnet'
+            - type: 'null'
+          description: Null in plain mode, and for an address the last `status` read did not list.
+
+    Forgotten:
+      type: object
+      description: 'An entry of the forget map (R6.6): a record that expired or left, remembered so a lagging copy cannot bring it back.'
+      required: [id, why, removed_age_s, forget_left_s, incarnation, counter]
+      properties:
+        id:
+          type: string
+          x-source: key of state.Store._forget
+        why:
+          type: string
+          enum: [expired, left]
+          description: '`expired`: its seen age passed EXPIRE_SECONDS (R6.4). `left`: a leaving body was accepted (R6.5).'
+          x-new: true
+          x-source: 'new: the forget map keeps no reason; record it in state.Store.expire and where _apply_body accepts a leaving body'
+        removed_age_s:
+          type: number
+          minimum: 0
+          x-source: now - state.Store._forget[id][1]
+        forget_left_s:
+          type: number
+          minimum: 0
+          description: How much longer the entry is kept.
+          x-source: cfg.forget_s - removed_age_s
+        incarnation:
+          type: integer
+          description: Of the version remembered; a body must exceed (incarnation, counter) to be readmitted.
+          x-source: state.Store._forget[id][0][0]
+        counter:
+          type: integer
+          x-source: state.Store._forget[id][0][1]
+
+    Refusal:
+      type: object
+      description: Incoming gossip refused from one source, by reason. The totals are in `rejected`.
+      required: [source, address, kind, status, count, last_age_s, note]
+      properties:
+        source:
+          type: string
+          description: The source IP of the refused connections.
+        address:
+          type: [string, 'null']
+          description: The discovered address that source is, or null when it is no discovered address (an untagged device, a device outside the tailnet range).
+          x-source: gossip.Core.address_for_source(source)
+        kind:
+          type: string
+          enum: [proto, group, identity, overflow]
+          description: The counter in `rejected` it was counted under.
+        status:
+          type: integer
+          enum: [403, 409, 413]
+        count:
+          type: integer
+          minimum: 1
+        last_age_s:
+          type: number
+          minimum: 0
+        note:
+          type: string
+          description: What the last refusal answered, e.g. "group 'proto-judy' is not 'default'".
+      x-new: true
+      x-source: 'new: api_gossip.GossipApp._refuse keeps only the once-per-peer log set (_logged); keep {(kind, source): (count, last time, message)} there, bounded (e.g. 256 sources)'
+
+    SidecarState:
+      type: string
+      enum: [ok, no-control, no-socket, logged-out, unknown]
+      description: |
+        The sidecar in one word, worked out by the grange:
+
+        - `no-socket`: the grange's last call to the daemon's LocalAPI failed (`reachable`
+          is false). Only the grange can know this. Discovery keeps its last list and every
+          incoming exchange fails the whois check (R5.13) until it answers again.
+        - `logged-out`: the LocalAPI answers and `backend` is not `Running`
+          (`NeedsLogin`, `Stopped`, `NoState`): no tailnet at all.
+        - `no-control`: `backend` is `Running` and a health warning says the daemon cannot
+          reach its coordination server. Tunnels already up keep working.
+        - `ok`: `backend` is `Running` and there is no such warning.
+        - `unknown`: plain mode (no sidecar), or before the first read.
+      x-cost: |
+        `no-control` is best effort: `status` gives health warnings as text only. Match the
+        daemon's wording for the coordination server, or read the warning codes from
+        `/localapi/v0/watch-ipn-bus` (NotifyInitialHealthState). A grange that cannot tell
+        serves `ok` and leaves the judgement to the reader of `health`.
+
+    MeshSidecar:
+      type: object
+      description: |
+        This machine's Tailscale sidecar, as the grange reaches it through the shared
+        LocalAPI socket. In plain mode (GRANGE_PEERS set) `state` is `unknown`, `reachable`
+        is false and the rest is empty.
+      required: [state, state_age_s, reachable, unreachable_for_s, status_age_s, backend, version, health, home_derp, home_derp_id, derp_latency_ms, bytes]
+      properties:
+        state:
+          $ref: '#/components/schemas/SidecarState'
+          x-new: true
+          x-source: 'new: derived from reachable, backend and health as described'
+        state_age_s:
+          type: [number, 'null']
+          minimum: 0
+          description: How long `state` has held its value. Null when unknown.
+          x-new: true
+          x-source: 'new: the time `state` last changed'
+        reachable:
+          type: boolean
+          description: The grange's most recent LocalAPI call (status at a discovery refresh, or a whois) got an answer.
+          x-new: true
+          x-source: 'new: the outcome of discovery.LocalAPI.get; today gossip.Core.refresh_discovery only logs the failure once'
+        unreachable_for_s:
+          type: [number, 'null']
+          minimum: 0
+          description: Since the first of the current run of failed LocalAPI calls. Null while reachable.
+          x-new: true
+          x-source: 'new: beside reachable'
+        status_age_s:
+          type: [number, 'null']
+          minimum: 0
+          description: Age of the `status` read that the sidecar values in this response come from. Null before the first.
+          x-new: true
+          x-cost: |
+            Discovery reads `status` every DISCOVERY_SECONDS (30 s), which is too old for byte
+            counters and handshake ages. Read `status` and `usermetrics` on their own timer,
+            every 5 s, and serve the cached result; do not call the daemon inside the request.
+          x-source: 'new: the time of the last successful discovery.LocalAPI.status()'
+        backend:
+          type: string
+          description: The daemon's BackendState, e.g. Running, NeedsLogin, Stopped. Empty when never read.
+          x-source: discovery.LocalAPI.status()["BackendState"]
+        version:
+          type: string
+          description: The Tailscale client's version.
+          x-source: discovery.LocalAPI.status()["Version"]
+        health:
+          type: array
+          items: {type: string}
+          description: The daemon's health warnings, in its own words. Empty when it has none.
+          x-source: discovery.LocalAPI.status()["Health"]
+        home_derp:
+          type: string
+          description: The region code of this sidecar's home relay.
+          x-source: discovery.LocalAPI.status()["Self"]["Relay"]
+        home_derp_id:
+          type: [integer, 'null']
+          description: Its region id.
+          x-source: tailscaled_home_derp_region_id in /localapi/v0/usermetrics
+        derp_latency_ms:
+          type: [number, 'null']
+          minimum: 0
+          description: Round trip to the home relay. Null unless the grange has a way to measure it.
+          x-new: true
+          x-cost: |
+            No read-permitted LocalAPI route gives it: the daemon has no netcheck route and
+            `debug-derp-region` is refused to a non-root caller. Serve null; the viewer shows
+            the relay without a latency.
+        bytes:
+          type: object
+          description: Bytes exchanged with peers by path, sent plus received, since the sidecar started.
+          required: [direct, derp]
+          properties:
+            direct:
+              type: integer
+              minimum: 0
+              description: 'tailscaled_{inbound,outbound}_bytes_total with path direct_ipv4 or direct_ipv6.'
+              x-new: true
+              x-source: 'new: GET /localapi/v0/usermetrics (Prometheus text), parsed on the same timer as status'
+            derp:
+              type: integer
+              minimum: 0
+              description: 'The same counters with path derp.'
+              x-new: true
+              x-source: 'new: the same read of /localapi/v0/usermetrics'
+
+    Mesh:
+      type: object
+      required: [grange, address, group, proto, incarnation, rev, counter, cursor, uptime_s, image, freshness, farm, local_api, gossip, duplicate_id, duplicate_source, peers, forgotten, rejected, refusals, tailnet]
+      properties:
+        grange:
+          type: string
+          description: This grange's id.
+          x-source: config.Config.grange_id
+        address:
+          type: string
+          description: Its own topology address, tailnet `ip:gossip port`.
+          x-source: gossip.Core.own
+        group:
+          type: string
+          x-source: config.Config.group
+        proto:
+          type: integer
+          x-source: config.PROTO
+        incarnation:
+          type: integer
+          x-source: state.Store.incarnation
+        rev:
+          type: integer
+          minimum: 1
+          description: Content version of this grange's own record.
+          x-source: state.Store.rev
+        counter:
+          type: integer
+          minimum: 1
+          description: Liveness version of its own record; moves at every heartbeat too.
+          x-source: state.Store.counter
+        cursor:
+          type: integer
+          minimum: 1
+          x-source: state.Store.cursor
+        uptime_s:
+          type: number
+          minimum: 0
+          x-source: clock.monotonic() - state.Store.started_at
+        image:
+          type: object
+          description: The build and the tag it is checked against. (While the image is stale this route answers 503 instead.)
+          required: [commit, tag, tag_commit, verdict]
+          properties:
+            commit:
+              type: string
+              x-source: freshness.Config.built
+            tag:
+              type: string
+              x-source: freshness.Config.tag
+            tag_commit:
+              type: [string, 'null']
+              description: The commit the tag last resolved to. Null before the first poll, or when it could not be resolved.
+              x-source: freshness.Checker.last.tagged (keep the Checker reachable from the handler)
+            verdict:
+              type: string
+              enum: [fresh, ahead, unverifiable, unknown]
+              description: The last definitive verdict; `unknown` before the first poll, or with SKIP_FRESHNESS_CHECK.
+              x-source: freshness.Checker.last.verdict
+        freshness:
+          $ref: '#/components/schemas/Freshness'
+          description: The same block as `/health`.
+          x-source: freshness_watch.FreshnessState.snapshot()
+        farm:
+          type: object
+          description: This machine's agent-farm, as its pushes show it.
+          required: [last_push_age_s, pushes, stale, agents]
+          properties:
+            last_push_age_s:
+              type: [number, 'null']
+              minimum: 0
+              description: Since the last `PUT /v1/farm`. Null until the first.
+              x-source: state.Store._own_farm_age(now)
+            pushes:
+              type: integer
+              minimum: 0
+              description: Pushes received since start, content changes or not.
+              x-new: true
+              x-source: 'new: counted in state.Store.set_agents'
+            stale:
+              type: boolean
+              x-source: state.Store.farm_stale
+            agents:
+              type: integer
+              minimum: 0
+              description: How many agents farm reports. A count only.
+              x-source: len(state.Store.agents)
+        local_api:
+          type: object
+          required: [long_polls]
+          properties:
+            long_polls:
+              type: integer
+              minimum: 0
+              description: Requests held open on `/v1/agents` right now (frolic's, typically one).
+              x-new: true
+              x-source: 'new: a counter around the wait in state.Store.wait_for'
+        gossip:
+          type: object
+          required: [sent, outstanding, neighbours, discovered, live, last_ok_age_s, discovery_age_s, resumes, corrections]
+          properties:
+            sent:
+              $ref: '#/components/schemas/SentCounts'
+              x-source: gossip.Core.sent
+            outstanding:
+              type: integer
+              minimum: 0
+              description: Requests in flight.
+              x-source: gossip.Core.outstanding
+            neighbours:
+              type: array
+              items: {type: string}
+              description: The neighbours' addresses, the successor first (R6.10).
+              x-source: gossip.Core.neighbours()
+            discovered:
+              type: integer
+              minimum: 0
+              description: The same number as `/health` `peers_discovered`.
+              x-source: len(gossip.Core.discovered)
+            live:
+              type: integer
+              minimum: 0
+              description: The same number as `/health` `peers_live`.
+              x-source: len(gossip.Core.live())
+            last_ok_age_s:
+              type: [number, 'null']
+              minimum: 0
+              description: The same value as `/health` `last_gossip_age_s`.
+              x-source: stats.Stats._last_gossip_at
+            discovery_age_s:
+              type: [number, 'null']
+              minimum: 0
+              description: Since the last discovery refresh that answered. Null until the first.
+              x-new: true
+              x-source: 'new: a time set in gossip.Core.refresh_discovery on success'
+            resumes:
+              type: integer
+              minimum: 0
+              description: Times the ticker saw a gap over 5 s, a pause or a sleep (R6.22).
+              x-source: ticker.Ticker.resumes
+            corrections:
+              type: integer
+              minimum: 0
+              description: Incarnation corrections (R4.8).
+              x-source: state.Store.corrections
+        duplicate_id:
+          type: boolean
+          x-source: state.Store.duplicate_id
+        duplicate_source:
+          type: [string, 'null']
+          description: The address the second greater version of this grange's own id came from, when `duplicate_id` is true.
+          x-source: state.Store.duplicate_source
+        peers:
+          type: array
+          description: Every discovered address, in byte order of `address` (the order R6.10's ring walks). This grange's own address is not among them.
+          items:
+            $ref: '#/components/schemas/MeshPeer'
+        forgotten:
+          type: array
+          items:
+            $ref: '#/components/schemas/Forgotten'
+        rejected:
+          $ref: '#/components/schemas/Rejected'
+          description: The same counters as `/health`.
+          x-source: stats.Stats.snapshot(store_overflow=state.Store.overflow)["rejected"]
+        refusals:
+          type: array
+          description: Incoming gossip refused, by source and reason, most recent first. A source that is no discovered address (`address` null) appears nowhere else.
+          items:
+            $ref: '#/components/schemas/Refusal'
+        tailnet:
+          $ref: '#/components/schemas/MeshSidecar'
+
+    BodyOutcome:
+      type: string
+      enum: [accepted, refreshed, ignored, own, overflow, change, forward, followup, leaving]
+      description: |
+        What became of a body in an exchange.
+
+        Received (the outcomes of state.Store._apply_body): `accepted`, new content was
+        stored (this moves the cursor, and the body is forwarded once); `refreshed`, liveness
+        only; `ignored`, a copy already held, or one the forget map refuses; `own`, a version
+        of this grange's own id; `overflow`, a new id beyond the record cap.
+
+        Sent: `change`, this grange's own record after a content change (R6.11); `forward`,
+        a body just accepted, passed on once (R6.12); `followup`, what a repair found the
+        other side lacking (R5.10); `leaving`, the final body on SIGTERM (R6.16).
+
+    MeshEvent:
+      type: object
+      required: [seq, age_s, kind, peer, ok, status, out_b, in_b, rtt_ms, bodies, note]
+      properties:
+        seq:
+          type: integer
+          minimum: 1
+          description: Position in this start's sequence; increases by one per event.
+        age_s:
+          type: number
+          minimum: 0
+          description: How long ago it happened, when the response was built.
+        kind:
+          type: string
+          enum: [push-out, push-in, repair-out, repair-in, probe, refused, mark, neighbours, discover, join, expire, leave, readmit, restart, farm, farm-stale, path, fresh, resume, sidecar]
+          description: |
+            | kind | when | where the grange knows it |
+            |---|---|---|
+            | `push-out` | a push this grange sent got its answer, or failed | gossip.Core._on_result, kind push |
+            | `push-in` | a push was accepted from a peer | api_gossip.GossipApp.handle, digest absent |
+            | `repair-out` | a repair this grange started got its answer, or failed | gossip.Core._on_result, kind repair |
+            | `repair-in` | a repair request was answered | api_gossip.GossipApp.handle, digest present |
+            | `probe` | a repair to an address outside the live set got its answer, or failed | gossip.Core._on_result, kind probe |
+            | `refused` | an incoming request was refused (403, 409, 413) | api_gossip.GossipApp._refuse |
+            | `mark` | an address was marked failed (R6.20) | gossip.Core._on_result, when the mark is new |
+            | `neighbours` | the neighbour list changed; `note` lists `+address` and `-address` | gossip.Core.neighbours, when recomputed to a different list |
+            | `discover` | an address appeared, disappeared or changed its hint; or a refresh failed (`ok` false) | gossip.Core.refresh_discovery |
+            | `join` | the first body ever seen for an id was accepted | state.Store._apply_body |
+            | `expire` | a record's seen age passed EXPIRE_SECONDS | state.Store.expire |
+            | `leave` | a leaving body was accepted | state.Store._apply_body |
+            | `readmit` | a forgotten id returned with the same incarnation | state.Store._apply_body |
+            | `restart` | a greater incarnation arrived for an id | state.Store._apply_body |
+            | `farm` | a farm push was a content change; `note` gives the agent count and rev | state.Store.set_agents |
+            | `farm-stale` | this grange's own farm_stale flipped; `ok` false when it turned stale | state.Store.evaluate_farm_stale, set_agents |
+            | `path` | a peer's path changed between direct and DERP; `ok` false when it fell back to DERP | comparing CurAddr between two status reads |
+            | `fresh` | a freshness poll ran; `status` 304 when the tag had not moved | freshness_watch.recheck_loop |
+            | `resume` | the ticker saw a gap; `note` gives its length | ticker.Ticker.run_once |
+            | `sidecar` | the sidecar's `state` changed; `note` gives the new state | where `tailnet.state` is derived |
+        peer:
+          type: string
+          description: The grange id bound to the address the event concerns; the address when none is bound; the source IP for a refusal of no discovered address; this grange's own id for events about itself (`farm`, `farm-stale`, `fresh`, `resume`, `sidecar`, `neighbours`, a failed `discover`).
+        ok:
+          type: boolean
+          description: False for a failed or refused exchange and for the bad direction of a state change, as the table says.
+        status:
+          type: [integer, 'null']
+          description: The HTTP status of an exchange (the answer received, or the answer given). Null for a timeout and for events that are not exchanges.
+        out_b:
+          type: integer
+          minimum: 0
+          description: Bytes this grange sent in the exchange (a request it made, or the reply it gave). 0 for other events.
+        in_b:
+          type: integer
+          minimum: 0
+          description: Bytes it received (the reply to its request, or the request it was sent).
+        rtt_ms:
+          type: [number, 'null']
+          minimum: 0
+          description: For an exchange this grange started, the time from connect to the end of the reply. Null otherwise.
+          x-source: measured around runtime.HttpTransport.exchange
+        bodies:
+          type: array
+          description: The bodies the exchange carried, each as `[grange id, rev, outcome]`.
+          items:
+            type: array
+            minItems: 3
+            maxItems: 3
+            prefixItems:
+              - {type: string, description: grange id}
+              - {type: integer, minimum: 1, description: rev}
+              - $ref: '#/components/schemas/BodyOutcome'
+        note:
+          type: string
+          description: A few words for a person; empty when there is nothing to add.
+      x-new: true
+      x-source: 'new: a collections.deque(maxlen=2000) with a threading.Condition, appended to at the places the kind table names'
+
+    MeshEvents:
+      type: object
+      required: [seq, first_seq, incarnation, events]
+      properties:
+        seq:
+          type: integer
+          minimum: 0
+          description: The newest event's `seq`; 0 when nothing has happened since start. Pass it back as `after`.
+        first_seq:
+          type: integer
+          minimum: 0
+          description: The oldest `seq` still in the ring; 0 when the ring is empty.
+        incarnation:
+          type: integer
+          description: This grange's incarnation, so a client can tell a restart from a long silence.
+        events:
+          type: array
+          description: Oldest first.
+          items:
+            $ref: '#/components/schemas/MeshEvent'
+
+    Ping:
+      type: object
+      required: [peer, address, ok, latency_ms, path, endpoint, derp_region_id, derp_region_code, error]
+      properties:
+        peer:
+          type: [string, 'null']
+          description: The grange id bound to the address, when there is one.
+          x-source: gossip.Core.binding.get(address)
+        address:
+          type: string
+          x-source: the discovered address the `peer` parameter matched
+        ok:
+          type: boolean
+          description: The peer's sidecar answered.
+          x-source: the daemon's reply has no Err and a LatencySeconds
+        latency_ms:
+          type: [number, 'null']
+          minimum: 0
+          x-source: 'LatencySeconds * 1000 from POST /localapi/v0/ping?ip=...&type=disco'
+        path:
+          type: [string, 'null']
+          enum: [direct, derp, null]
+          description: How the pong came back.
+          x-source: direct when Endpoint is set, derp when DERPRegionID is not 0
+        endpoint:
+          type: string
+          description: The peer's UDP endpoint when direct; empty otherwise.
+          x-source: Endpoint
+        derp_region_id:
+          type: [integer, 'null']
+          x-source: DERPRegionID, when not 0
+        derp_region_code:
+          type: string
+          x-source: DERPRegionCode
+        error:
+          type: string
+          description: The daemon's `Err`, or why there was no answer. Empty when `ok`.
+          x-source: Err
+
+  examples:
+    MeshTeam:
+      summary: A team of five as djp3 sees it; frank's lid is shut, judy runs a private build, ivan is relayed
+      value:
+        grange: djp3
+        address: '100.64.0.5:7789'
+        group: default
+        proto: 1
+        incarnation: 1795040341941
+        rev: 14
+        counter: 912
+        cursor: 381
+        uptime_s: 5321.4
+        image:
+          commit: bf6e87e0c1d2a3b4c5d6e7f8091a2b3c4d5e6f70
+          tag: agent-grange-latest
+          tag_commit: bf6e87e0c1d2a3b4c5d6e7f8091a2b3c4d5e6f70
+          verdict: fresh
+        freshness:
+          last_polled: '2026-11-18T22:19:41+00:00'
+          last_summary: image is current (tag agent-grange-latest at bf6e87e)
+          recheck_seconds: 30.0
+          polls: 176
+          consecutive_unchanged_polls: 175
+        farm: {last_push_age_s: 7.2, pushes: 180, stale: false, agents: 6}
+        local_api: {long_polls: 1}
+        gossip:
+          sent: {push: 812, repair: 1774, probe: 59}
+          outstanding: 0
+          neighbours: ['100.64.0.6:7789', '100.64.0.8:7789']
+          discovered: 4
+          live: 2
+          last_ok_age_s: 0.8
+          discovery_age_s: 12.0
+          resumes: 0
+          corrections: 0
+        duplicate_id: false
+        duplicate_source: null
+        peers:
+          - address: '100.64.0.12:7789'
+            id: frank
+            hostname: grange-frank
+            hint: true
+            failed: true
+            role: outside
+            last_ok_age_s: 92.4
+            last_fail_age_s: 11.0
+            last_status: null
+            last_fail_status: null
+            last_error: timeout
+            fails: 7
+            sent: {push: 31, repair: 12, probe: 2}
+            recv: {push: 14, repair: 9}
+            bytes_out: 28110
+            bytes_in: 19004
+            lag: 0
+            record: null
+            tailnet: {online: true, active: true, cur_addr: '', relay: headscale, rx: 21877, tx: 30412, last_handshake_age_s: 172.0, latency_ms: 4.7, latency_age_s: 95.0}
+          - address: '100.64.0.14:7789'
+            id: null
+            hostname: grange-judy
+            hint: true
+            failed: true
+            role: outside
+            last_ok_age_s: null
+            last_fail_age_s: 62.0
+            last_status: 409
+            last_fail_status: 409
+            last_error: "group 'default' is not 'proto-judy'"
+            fails: 2
+            sent: {push: 0, repair: 0, probe: 2}
+            recv: {push: 0, repair: 0}
+            bytes_out: 1440
+            bytes_in: 110
+            lag: null
+            record: null
+            tailnet: {online: true, active: true, cur_addr: '192.168.1.34:41641', relay: headscale, rx: 3120, tx: 3644, last_handshake_age_s: 121.0, latency_ms: 5.6, latency_age_s: 9.0}
+          - address: '100.64.0.6:7789'
+            id: alice
+            hostname: grange-alice
+            hint: true
+            failed: false
+            role: successor
+            last_ok_age_s: 0.8
+            last_fail_age_s: null
+            last_status: 204
+            last_fail_status: null
+            last_error: ''
+            fails: 0
+            sent: {push: 61, repair: 40, probe: 0}
+            recv: {push: 58, repair: 37}
+            bytes_out: 74120
+            bytes_in: 69311
+            lag: 0
+            record: {incarnation: 1795040000047, rev: 9, counter: 530, seen_age_s: 0.8, farm_age_s: 12.0, farm_stale: false, leaving: false, agents: 5, held_for_s: 5318.0, admitted: first}
+            tailnet: {online: true, active: true, cur_addr: '192.168.1.26:41641', relay: headscale, rx: 81233, tx: 86010, last_handshake_age_s: 61.0, latency_ms: 2.9, latency_age_s: 3.0}
+          - address: '100.64.0.8:7789'
+            id: ivan
+            hostname: grange-ivan
+            hint: true
+            failed: false
+            role: neighbour
+            last_ok_age_s: 23.0
+            last_fail_age_s: null
+            last_status: 200
+            last_fail_status: null
+            last_error: ''
+            fails: 0
+            sent: {push: 12, repair: 0, probe: 0}
+            recv: {push: 4, repair: 7}
+            bytes_out: 9210
+            bytes_in: 7702
+            lag: 0
+            record: {incarnation: 1795040055433, rev: 4, counter: 21, seen_age_s: 3.1, farm_age_s: 26.0, farm_stale: false, leaving: false, agents: 2, held_for_s: 32.0, admitted: restart}
+            tailnet: {online: true, active: true, cur_addr: '', relay: headscale, rx: 10233, tx: 12004, last_handshake_age_s: 65.0, latency_ms: 140.3, latency_age_s: 6.0}
+        forgotten:
+          - {id: frank, why: expired, removed_age_s: 30.2, forget_left_s: 569.8, incarnation: 1795040000091, counter: 418}
+        rejected: {proto: 0, group: 9, identity: 1, overflow: 0}
+        refusals:
+          - {source: 100.64.0.14, address: '100.64.0.14:7789', kind: group, status: 409, count: 9, last_age_s: 2.0, note: "group 'proto-judy' is not 'default'"}
+          - {source: 100.64.0.40, address: null, kind: identity, status: 403, count: 1, last_age_s: 15.0, note: source device does not carry the grange tag}
+        tailnet:
+          state: ok
+          state_age_s: 5320.0
+          reachable: true
+          unreachable_for_s: null
+          status_age_s: 2.1
+          backend: Running
+          version: 1.104.7-tcbc74fe48
+          health: []
+          home_derp: headscale
+          home_derp_id: 999
+          derp_latency_ms: null
+          bytes: {direct: 1882113, derp: 20211}
+    MeshSocketLost:
+      summary: The grange cannot reach its sidecar's socket; the sidecar values are the last it read, 8 s ago
+      value:
+        grange: djp3
+        address: '100.64.0.5:7789'
+        group: default
+        proto: 1
+        incarnation: 1795040341941
+        rev: 4
+        counter: 16
+        cursor: 26
+        uptime_s: 120.0
+        image: {commit: bf6e87e0c1d2a3b4c5d6e7f8091a2b3c4d5e6f70, tag: agent-grange-latest, tag_commit: bf6e87e0c1d2a3b4c5d6e7f8091a2b3c4d5e6f70, verdict: fresh}
+        freshness:
+          last_polled: '2026-11-18T22:19:41+00:00'
+          last_summary: image is current (tag agent-grange-latest at bf6e87e)
+          recheck_seconds: 30.0
+          polls: 3
+          consecutive_unchanged_polls: 2
+        farm: {last_push_age_s: 28.0, pushes: 4, stale: false, agents: 5}
+        local_api: {long_polls: 1}
+        gossip:
+          sent: {push: 40, repair: 39, probe: 3}
+          outstanding: 0
+          neighbours: ['100.64.0.6:7789']
+          discovered: 1
+          live: 1
+          last_ok_age_s: 2.0
+          discovery_age_s: 38.0
+          resumes: 0
+          corrections: 0
+        duplicate_id: false
+        duplicate_source: null
+        peers:
+          - address: '100.64.0.6:7789'
+            id: alice
+            hostname: grange-alice
+            hint: true
+            failed: false
+            role: successor
+            last_ok_age_s: 2.0
+            last_fail_age_s: null
+            last_status: 200
+            last_fail_status: null
+            last_error: ''
+            fails: 0
+            sent: {push: 18, repair: 9, probe: 0}
+            recv: {push: 1, repair: 0}
+            bytes_out: 14120
+            bytes_in: 6311
+            lag: 0
+            record: {incarnation: 1795040000047, rev: 3, counter: 14, seen_age_s: 2.0, farm_age_s: 12.0, farm_stale: false, leaving: false, agents: 6, held_for_s: 118.0, admitted: first}
+            tailnet: {online: true, active: true, cur_addr: '192.168.1.26:41641', relay: headscale, rx: 8123, tx: 8601, last_handshake_age_s: 110.0, latency_ms: 2.9, latency_age_s: 11.0}
+        forgotten: []
+        rejected: {proto: 0, group: 0, identity: 11, overflow: 0}
+        refusals:
+          - {source: 100.64.0.6, address: '100.64.0.6:7789', kind: identity, status: 403, count: 11, last_age_s: 1.0, note: source device does not carry the grange tag}
+        tailnet:
+          state: no-socket
+          state_age_s: 8.0
+          reachable: false
+          unreachable_for_s: 8.0
+          status_age_s: 8.4
+          backend: Running
+          version: 1.104.7-tcbc74fe48
+          health: []
+          home_derp: headscale
+          home_derp_id: 999
+          derp_latency_ms: null
+          bytes: {direct: 182113, derp: 2021}
+    EventsForwardOnce:
+      summary: A change of carol's arrives from alice, is forwarded once, and arrives again as a duplicate
+      value:
+        seq: 90213
+        first_seq: 88214
+        incarnation: 1795040341941
+        events:
+          - {seq: 90210, age_s: 0.42, kind: push-in, peer: alice, ok: true, status: 204, out_b: 0, in_b: 378, rtt_ms: null, bodies: [[carol, 3, accepted]], note: ''}
+          - {seq: 90211, age_s: 0.41, kind: push-out, peer: ivan, ok: true, status: 204, out_b: 378, in_b: 0, rtt_ms: 141.8, bodies: [[carol, 3, forward]], note: ''}
+          - {seq: 90212, age_s: 0.4, kind: push-in, peer: erin, ok: true, status: 204, out_b: 0, in_b: 378, rtt_ms: null, bodies: [[carol, 3, ignored]], note: ''}
+          - {seq: 90213, age_s: 0.1, kind: repair-out, peer: dave, ok: true, status: 200, out_b: 672, in_b: 672, rtt_ms: 24.6, bodies: [], note: ''}
+    EventsFailures:
+      summary: frank times out and is marked; judy's request is refused; an untagged device is refused; the neighbours change
+      value:
+        seq: 90219
+        first_seq: 88220
+        incarnation: 1795040341941
+        events:
+          - {seq: 90214, age_s: 12.0, kind: push-out, peer: frank, ok: false, status: null, out_b: 0, in_b: 0, rtt_ms: 1000.0, bodies: [[djp3, 14, change]], note: timeout}
+          - {seq: 90215, age_s: 12.0, kind: mark, peer: frank, ok: false, status: null, out_b: 0, in_b: 0, rtt_ms: null, bodies: [], note: timeout}
+          - {seq: 90216, age_s: 12.0, kind: neighbours, peer: djp3, ok: true, status: null, out_b: 0, in_b: 0, rtt_ms: null, bodies: [], note: '+100.64.0.10:7789 -100.64.0.12:7789'}
+          - {seq: 90217, age_s: 6.5, kind: refused, peer: '100.64.0.14:7789', ok: false, status: 409, out_b: 46, in_b: 724, rtt_ms: null, bodies: [], note: "group 'proto-judy' is not 'default'"}
+          - {seq: 90218, age_s: 3.0, kind: refused, peer: 100.64.0.40, ok: false, status: 403, out_b: 58, in_b: 0, rtt_ms: null, bodies: [], note: source device does not carry the grange tag}
+          - {seq: 90219, age_s: 1.2, kind: path, peer: tobias, ok: false, status: null, out_b: 0, in_b: 0, rtt_ms: null, bodies: [], note: direct UDP lost; relayed through DERP headscale}
