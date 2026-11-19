@@ -42,6 +42,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Loca
         guard let v = version, !v.isEmpty else { return "📡 agent-grange-viz" }
         return "📡 agent-grange-viz v\(v)"
     }
+    /// Draws the window's title in the middle of its bar, whenever it is set (CenteredTitle).
+    private var centeredTitle: CenteredTitle?
     private var window: NSWindow!
     private var terminal: LocalProcessTerminalView!
     private var coreRunning = false
@@ -98,6 +100,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Loca
                          styleMask: [.titled, .closable, .miniaturizable, .resizable],
                          backing: .buffered, defer: false)
         w.title = defaultTitle
+        centeredTitle = CenteredTitle(in: w)
         w.minSize = NSSize(width: 600, height: 300)
         w.tabbingMode = .disallowed
         w.backgroundColor = Theme.background

@@ -65,10 +65,10 @@ The app does not update itself yet: a new release is a new download from the sam
 
 You need macOS 27 (Golden Gate) or later on Apple silicon.
 
-**On macOS 26 (Tahoe) or earlier?** The Mac app needs macOS 27, as agent-farm and
-agent-frolic do, so it can't run on an earlier macOS. macOS will refuse to open it and say it
-needs macOS 27.0 or later. The viewer itself doesn't need macOS 27, so you can run it from
-source in a terminal instead. Install Python 3.14 (python.org's installer runs on earlier
+**On macOS 26 (Tahoe) or earlier?** The app carries its own copy of Python, and that copy is
+built for macOS 27, so the app can't run on an earlier macOS. macOS will refuse to open it
+and say it needs macOS 27.0 or later. The viewer itself doesn't need macOS 27, so you can run
+it from source in a terminal instead. Install Python 3.14 (python.org's installer runs on earlier
 macOS versions), then:
 
     git clone https://github.com/djp3/agent-grange-viz.git && cd agent-grange-viz
@@ -233,14 +233,23 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt -r requiremen
 ```
 
 **The minimum macOS is 27**, declared in `macos/Info.plist` (`LSMinimumSystemVersion`, which
-Finder checks before it opens the app) and in `macos/Package.swift`; a test keeps the two the
-same. `scripts/build_app.sh` stops at once on an earlier macOS and says what works there. On
-macOS 27 the bundled Python agrees with the declaration: it is Homebrew's, which Homebrew
-builds for the macOS it runs on, so nearly every part of the Python tree records macOS 27 as
-its minimum. When the build Mac moves to a newer macOS and Homebrew's Python follows,
-`scripts/check_macos_minimum.sh` stops the build and lists the files that need more; then
-either raise the minimum in both files and here, or build with a Python made for older
-systems (python.org's installer).
+Finder checks before it opens the app) and in `macos/Package.swift`, which the Swift
+executable records as its own. It follows the bundled Python: releases are built with
+Homebrew's, which Homebrew builds for the macOS it runs on, so nearly every part of the Python
+tree records macOS 27 as its minimum. `scripts/check_min_macos.py`, the check agent-farm and
+agent-frolic share, holds the whole app to that before it is signed: the build stops when any
+Apple-silicon binary inside needs more than `Info.plist` says, or when the app's own
+executable records another minimum than it. When the build Mac moves to a newer macOS and
+Homebrew's Python follows, it lists the files that need more; then either raise the minimum
+in both files and here, or build with a Python made for older systems (python.org's
+installer). `scripts/build_app.sh` also stops at once on a macOS before 27, and says what
+works there.
+
+An app built for macOS 27 gets its window's title at the left of the title bar, beside the
+buttons, and macOS has no setting for that. `macos/Sources/AgentGrangeViz/CenteredTitle.swift`,
+the same file as in the other two apps, hides the system's title and draws a label in the
+middle of the bar in its place; the window keeps its title for the Dock, Mission Control and
+VoiceOver.
 
 `scripts/build_app.sh` builds the Mac app: PyInstaller makes the Python side, `swift build`
 the window, and the result is signed ad-hoc, which is enough to run it on the Mac that built

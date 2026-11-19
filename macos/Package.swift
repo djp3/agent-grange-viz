@@ -12,8 +12,9 @@ import PackageDescription
 let package = Package(
     name: "AgentGrangeViz",
     // The same as LSMinimumSystemVersion in Info.plist. It follows the libraries bundled with
-    // the Python side (Homebrew builds them for the macOS they were built on);
-    // scripts/check_macos_minimum.sh stops the build when anything in the app needs more.
+    // the Python side (Homebrew builds them for the macOS they were built on). The build stops
+    // (scripts/check_min_macos.py) when anything in the app needs more than Info.plist says,
+    // or when the executable this makes records another minimum than Info.plist's.
     platforms: [.macOS("27.0")],
     dependencies: [
         .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", from: "1.99.3"),

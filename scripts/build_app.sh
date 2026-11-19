@@ -4,8 +4,9 @@
 # Build dist/agent-grange-viz.app from a checkout:
 #   1. PyInstaller onedir of main.py            -> dist/python/agent-grange-viz-core
 #   2. SwiftPM release build of the host app     -> macos/.build/release/AgentGrangeViz
-#   3. assemble the bundle (binary, the Python tree, icon, Info.plist), and check that
-#      nothing in it needs a newer macOS than Info.plist says
+#   3. assemble the bundle (binary, the Python tree, icon, Info.plist), and check the macOS
+#      minimum (scripts/check_min_macos.py): stop if anything in it needs a newer macOS than
+#      Info.plist says, or the Swift executable records another minimum
 #   4. sign it: ad-hoc, or with CODESIGN_IDENTITY="Developer ID Application: …" (or that
 #      certificate's hash) and the hardened runtime, as scripts/release.sh does
 #   5. ask the signed copy to check itself, once main.py knows how (--selfcheck)
@@ -90,8 +91,12 @@ printf 'APPL????' > "$APP/Contents/PkgInfo"
 
 step "macOS minimum"
 # Nothing inside may need a newer macOS than Info.plist promises (Homebrew's libraries follow
-# the macOS they were built on), or the app would install there and fail to start.
-scripts/check_macos_minimum.sh "$APP"
+# the macOS they were built on), or the app would install there and fail to start. And the
+# Swift executable must record that same minimum: it is said twice, in Info.plist and in
+# Package.swift, and one raised without the other would pass otherwise. The check runs by
+# itself: it needs no package, so a build that reuses the Python core (SKIP_PYTHON=1) needs
+# no venv for it either.
+scripts/check_min_macos.py "$APP"
 
 step "sign"
 scripts/sign_app.sh "$APP" "${CODESIGN_IDENTITY:--}"
