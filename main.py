@@ -28,7 +28,7 @@ detail, t order by role or by address, q quit. In the demo also: space pause, e 
 moment, + / - speed.
 
 The terminal's title (the Mac app's title bar) reads 🐓 agent-grange-viz and the version, then
-one 📡 for each teammate's grange that is bound, up to ten.
+one 📡 for each teammate's grange that is bound and still on the board, up to ten.
 """
 from __future__ import annotations
 
@@ -67,8 +67,29 @@ MAX_DISHES = 10                          # a team past this many reads as this m
 
 def title_sequence(title: str) -> str:
     """OSC 0 sets the terminal's window title; Textual never sets one itself. An empty
-    title hands the choice back to the terminal."""
-    return f"\x1b]0;{title}\x07"
+    title hands the choice back to the terminal.
+
+    The terminal ends the sequence at the first BEL or ESC, and prints what follows into the
+    screen. So no control character goes inside it, whatever the version file or the
+    environment held: a line break is written as a space, and the rest are left out."""
+    words = " ".join(title.splitlines())
+    clean = "".join(ch for ch in words if not (ch < " " or "\x7f" <= ch <= "\x9f"))
+    return f"\x1b]0;{clean}\x07"
+
+
+def clear_title_left_behind(app, out) -> None:
+    """After the app has ended: if it did not get to clear its title (it raised, and Textual
+    ends such an app without going through exit), clear it now, so a terminal's tab does not
+    go on showing dishes for a viewer that is gone. The Mac app takes its own title back
+    whenever the viewer ends; this is for a viewer run in a terminal."""
+    if not app.title_shown:
+        return
+    try:
+        out.write(title_sequence(""))
+        out.flush()
+    except Exception:                    # no terminal there to tell
+        pass
+    app.title_shown = ""
 
 
 def window_title(bound: int) -> str:
@@ -76,15 +97,23 @@ def window_title(bound: int) -> str:
 
 
 def bound_nodes(snap: Snapshot) -> int:
-    """How many teammates' granges are bound: an exchange has named who answers at their
-    address (R6.19). Only GET /v1/mesh says that. Until a grange serves it, a teammate whose
-    record is held stands in: their grange has reached this one. While nothing answers on
-    the local port, nothing is known to be bound."""
-    if not snap.reachable:
+    """How many teammates' granges this one reaches: those that are bound (an exchange has
+    named who answers at their address, R6.19) and whose record is still held. A binding is
+    never cleared, so by itself it outlives the grange it named; the record is what expires
+    when a teammate goes away. Only GET /v1/mesh says who is bound. Until a grange serves it,
+    a record held is all there is to go by, and is enough. While nothing answers on
+    the local port, nothing is known to be bound; and while this grange's image is out of
+    date it answers 503 to everything and has stopped gossiping (R5.16), so it reaches nobody
+    whatever the last picture said.
+
+    Granges are counted, not columns: a teammate is one grange however many devices carry
+    its name or addresses are bound to its id (a sidecar registered again beside its old
+    self), so the count is of distinct names."""
+    if not snap.reachable or snap.me.image_stale:
         return 0
     if snap.has_mesh:
-        return sum(1 for p in snap.peers if p.bound)
-    return sum(1 for p in snap.peers if p.record is not None)
+        return len({p.name for p in snap.peers if p.bound and p.record is not None})
+    return len({p.name for p in snap.peers if p.record is not None})
 
 
 class GridView(Static):
@@ -494,6 +523,7 @@ def main(argv=None) -> int:
         log.exception("%s crashed", APP_NAME)
         raise
     finally:
+        clear_title_left_behind(app, sys.__stdout__)
         log.info("exiting (return code %s)", app.return_code)
         logging.shutdown()
 
