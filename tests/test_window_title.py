@@ -22,6 +22,20 @@ def test_title_sequence_is_osc_zero():
     assert main.title_sequence("") == "\x1b]0;\x07"
 
 
+def test_a_title_cannot_end_its_own_escape_early():
+    """The terminal ends the sequence at the first BEL or ESC it meets, and prints what
+    follows into the screen. A version read from a file of two lines, or from the
+    environment, must not be able to do that."""
+    for bad in ("v0.1.1\x07 📡📡", "v0.1.1\x1b\\ 📡📡", "v0.1.1\x9c 📡📡", "v0.1.1\x00\x7f 📡📡"):
+        seq = main.title_sequence(f"🐓 agent-grange-viz {bad}")
+        assert seq.startswith("\x1b]0;") and seq.endswith("\x07")
+        inside = seq[len("\x1b]0;"):-1]
+        assert not any(ch < " " or "\x7f" <= ch <= "\x9f" for ch in inside), repr(inside)
+        assert inside.endswith("📡📡") and "v0.1.1" in inside
+    assert main.title_sequence("v0.1.1\n# a second line") == "\x1b]0;v0.1.1 # a second line\x07"
+    assert main.title_sequence("one\r\ntwo\u2028three") == "\x1b]0;one two three\x07"
+
+
 def test_the_title_carries_the_rooster_and_the_version():
     v = apppaths.app_version()
     assert v                                   # a checkout has a VERSION file

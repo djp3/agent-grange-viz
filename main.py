@@ -67,8 +67,14 @@ MAX_DISHES = 10                          # a team past this many reads as this m
 
 def title_sequence(title: str) -> str:
     """OSC 0 sets the terminal's window title; Textual never sets one itself. An empty
-    title hands the choice back to the terminal."""
-    return f"\x1b]0;{title}\x07"
+    title hands the choice back to the terminal.
+
+    The terminal ends the sequence at the first BEL or ESC, and prints what follows into the
+    screen. So no control character goes inside it, whatever the version file or the
+    environment held: a line break is written as a space, and the rest are left out."""
+    words = " ".join(title.splitlines())
+    clean = "".join(ch for ch in words if not (ch < " " or "\x7f" <= ch <= "\x9f"))
+    return f"\x1b]0;{clean}\x07"
 
 
 def clear_title_left_behind(app, out) -> None:
