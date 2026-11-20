@@ -11,8 +11,8 @@ from textual.drivers.headless_driver import HeadlessDriver
 import apppaths
 import main
 from demo import DemoSource
-from model import Gone, Me, Peer, Record, Snapshot, Tailnet
-from standins import Scripted, drive
+from model import Gone, Me, Peer, Snapshot, Tailnet
+from standins import Scripted, drive, healthy, today
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -59,12 +59,8 @@ def test_the_mac_app_shows_the_same_words_until_the_viewer_sets_its_own():
 
 
 # ---- which granges count --------------------------------------------------------------------------
-def held(name: str, **kw) -> Peer:
-    return Peer(key=name, name=name, record=Record(seen_age=3.0, farm_age=8.0, farm_stale=False, agents=1), **kw)
-
-
-def test_with_the_mesh_a_grange_counts_while_it_is_bound_and_its_record_is_held():
-    snap = Snapshot(has_mesh=True, peers=[held("alice", bound=True), held("carol", bound=False),
+def test_with_the_mesh_a_grange_counts_while_it_is_bound_and_its_record_is_healthy():
+    snap = Snapshot(has_mesh=True, peers=[healthy("alice", bound=True), healthy("carol", bound=False),
                                          Peer(key="judy", name="judy", bound=False),
                                          Peer(key="frank", name="frank", bound=True, gone=Gone("expired", 30.0)),
                                          Peer(key="mira", name="mira", bound=True, gone=Gone("left", 5.0))])
@@ -75,13 +71,13 @@ def test_a_binding_alone_does_not_keep_a_dish_once_the_record_has_gone():
     """A binding is never cleared, so it outlives the grange it named: a lid shut an hour ago
     is still bound. With the mesh or without it, the same team reads the same."""
     gone = [Peer(key="frank", name="frank", bound=True, gone=Gone("expired", 3600.0))]
-    assert main.bound_nodes(Snapshot(has_mesh=True, peers=[held("alice", bound=True)] + gone)) == 1
+    assert main.bound_nodes(Snapshot(has_mesh=True, peers=[healthy("alice", bound=True)] + gone)) == 1
     gone[0].bound = None
-    assert main.bound_nodes(Snapshot(has_mesh=False, peers=[held("alice")] + gone)) == 1
+    assert main.bound_nodes(Snapshot(has_mesh=False, peers=[healthy("alice")] + gone)) == 1
 
 
 def test_without_the_mesh_a_record_held_stands_in():
-    snap = Snapshot(has_mesh=False, peers=[held("alice"), held("bob"),
+    snap = Snapshot(has_mesh=False, peers=[healthy("alice"), healthy("bob"),
                                           Peer(key="judy", name="judy", tailnet=Tailnet(online=True)),
                                           Peer(key="frank", name="frank", gone=Gone("expired", 30.0))])
     assert all(p.bound is None for p in snap.peers)
@@ -91,24 +87,24 @@ def test_without_the_mesh_a_record_held_stands_in():
 def test_a_grange_on_two_devices_is_one_grange():
     """A sidecar registered again leaves its old device listed beside the new one, both named
     grange-alice, and the viewer gives each the record held for alice: two columns, one grange."""
-    old = held("alice")
+    old = healthy("alice")
     old.key, old.address, old.hostname = "100.64.0.6:7789", "100.64.0.6:7789", "grange-alice"
-    new = held("alice")
+    new = healthy("alice")
     new.key, new.address, new.hostname = "100.64.0.21:7789", "100.64.0.21:7789", "grange-alice"
-    snap = Snapshot(has_mesh=False, peers=[old, new, held("bob")])
+    snap = Snapshot(has_mesh=False, peers=[old, new, healthy("bob")])
     assert main.bound_nodes(snap) == 2
 
 
 def test_a_grange_bound_at_two_addresses_is_one_grange():
     """With the mesh a binding is per address, and two addresses can be bound to one id."""
-    snap = Snapshot(has_mesh=True, peers=[held("alice", bound=True), held("alice", bound=True),
-                                         held("bob", bound=True), held("carol", bound=False)])
+    snap = Snapshot(has_mesh=True, peers=[healthy("alice", bound=True), healthy("alice", bound=True),
+                                         healthy("bob", bound=True), healthy("carol", bound=False)])
     snap.peers[0].key, snap.peers[1].key = "100.64.0.6:7789", "100.64.0.21:7789"
     assert main.bound_nodes(snap) == 2
 
 
 def test_nothing_is_bound_while_nothing_answers():
-    snap = Snapshot(has_mesh=True, reachable=False, unreachable_for=12.0, peers=[held("alice", bound=True)])
+    snap = Snapshot(has_mesh=True, reachable=False, unreachable_for=12.0, peers=[healthy("alice", bound=True)])
     assert main.bound_nodes(snap) == 0
     assert main.bound_nodes(Snapshot(reachable=False, ever_reached=False)) == 0
 
@@ -116,11 +112,11 @@ def test_nothing_is_bound_while_nothing_answers():
 def test_nothing_is_bound_while_this_granges_image_is_out_of_date():
     """Every route answers 503 then (R5.16), which is an answer: the viewer keeps the last
     picture. But a grange with a stale image has stopped gossiping, and reaches nobody."""
-    snap = Snapshot(has_mesh=False, peers=[held("alice"), held("bob"), held("carol")])
+    snap = Snapshot(has_mesh=False, peers=[healthy("alice"), healthy("bob"), healthy("carol")])
     assert snap.reachable and main.bound_nodes(snap) == 3
     snap.me.image_stale = True
     assert main.bound_nodes(snap) == 0
-    with_mesh = Snapshot(has_mesh=True, peers=[held("alice", bound=True)], me=Me(image_stale=True))
+    with_mesh = Snapshot(has_mesh=True, peers=[healthy("alice", bound=True)], me=Me(image_stale=True))
     assert main.bound_nodes(with_mesh) == 0
 
 
@@ -145,8 +141,8 @@ def titles(monkeypatch) -> list:
 
 
 def team(n: int, **kw) -> Snapshot:
-    return Snapshot(me=Me(gid="djp3", cursor=1), has_mesh=True,
-                    peers=[held(f"g{i}", bound=True) for i in range(n)], **kw)
+    """n teammates, bound and held, as a grange that serves the mesh gives them."""
+    return today([healthy(f"g{i}", bound=True) for i in range(n)], has_mesh=True, **kw)
 
 
 @drive
