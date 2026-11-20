@@ -161,6 +161,84 @@ async def test_the_title_follows_the_count_and_is_cleared_on_quit(monkeypatch):
     assert writes[-1] == main.title_sequence("")                   # the Mac app's own title comes back
 
 
+class Breaks(Scripted):
+    """A source that fails once it has been read a few times: the viewer dies of it."""
+
+    def __init__(self, snap, after: int = 2):
+        super().__init__(snap)
+        self.left = after
+
+    def snapshot(self):
+        self.left -= 1
+        if self.left < 0:
+            raise RuntimeError("the source broke")
+        return self.snap
+
+
+@drive
+async def test_a_viewer_that_dies_leaves_its_title_behind_and_main_clears_it(monkeypatch):
+    """Textual ends an app that raised without going through exit(), where the title is
+    cleared: the dishes would stay in the terminal's tab. main() clears what is left."""
+    writes = titles(monkeypatch)
+    app = main.GrangeViz(Breaks(team(3)), live=False)
+    try:
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            app.tick()                                             # the third reading: it raises
+            await pilot.pause()
+    except Exception:
+        pass
+    assert writes[-1] == main.title_sequence(f"{main.WINDOW_TITLE} 📡📡📡"), "nothing cleared it"
+    assert app.title_shown
+
+    class Out:
+        written = ""
+
+        def write(self, text):
+            self.written += text
+
+        def flush(self):
+            pass
+
+    out = Out()
+    main.clear_title_left_behind(app, out)
+    assert out.written == main.title_sequence("") and app.title_shown == ""
+    main.clear_title_left_behind(app, out)                         # and only once
+    assert out.written == main.title_sequence("")
+
+
+@drive
+async def test_a_clean_quit_leaves_nothing_for_main_to_clear(monkeypatch):
+    titles(monkeypatch)
+    app = main.GrangeViz(Scripted(team(3)), live=False)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.press("q")
+
+    class Out:
+        written = ""
+
+        def write(self, text):
+            self.written += text
+
+        def flush(self):
+            pass
+
+    out = Out()
+    main.clear_title_left_behind(app, out)
+    assert out.written == ""
+
+
+def test_the_mac_app_takes_its_title_back_when_the_viewer_ends_however_it_ends():
+    """After a crash, or a kill, nothing in the viewer runs to clear the title: the Mac app
+    does it, before anything else it does about the process having ended."""
+    swift = (ROOT / "macos" / "Sources" / "AgentGrangeViz" / "AppDelegate.swift").read_text()
+    ended = swift[swift.index("func processTerminated("):]
+    ended = ended[:ended.index("// MARK:")]
+    reset, restart = ended.index("self.window.title = self.defaultTitle"), ended.index("if self.restartRequested")
+    assert reset < restart, "it is put back first, whatever follows"
+
+
 @drive
 async def test_alone_the_title_is_the_name_and_the_version(monkeypatch):
     writes = titles(monkeypatch)

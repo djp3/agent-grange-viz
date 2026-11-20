@@ -71,6 +71,21 @@ def title_sequence(title: str) -> str:
     return f"\x1b]0;{title}\x07"
 
 
+def clear_title_left_behind(app, out) -> None:
+    """After the app has ended: if it did not get to clear its title (it raised, and Textual
+    ends such an app without going through exit), clear it now, so a terminal's tab does not
+    go on showing dishes for a viewer that is gone. The Mac app takes its own title back
+    whenever the viewer ends; this is for a viewer run in a terminal."""
+    if not app.title_shown:
+        return
+    try:
+        out.write(title_sequence(""))
+        out.flush()
+    except Exception:                    # no terminal there to tell
+        pass
+    app.title_shown = ""
+
+
 def window_title(bound: int) -> str:
     return f"{WINDOW_TITLE} {DISH * min(bound, MAX_DISHES)}" if bound > 0 else WINDOW_TITLE
 
@@ -502,6 +517,7 @@ def main(argv=None) -> int:
         log.exception("%s crashed", APP_NAME)
         raise
     finally:
+        clear_title_left_behind(app, sys.__stdout__)
         log.info("exiting (return code %s)", app.return_code)
         logging.shutdown()
 

@@ -203,6 +203,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Loca
         coreRunning = false
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            // The viewer clears its title only on a clean quit; after a crash its last title
+            // (dishes for granges it no longer watches) would stay in the Dock and switcher.
+            // Queued after any title it set, so this is the last word until a new one starts.
+            self.window.title = self.defaultTitle
             if self.restartRequested {       // Restart Viewer, or the demo switched: the exit was ours
                 self.restartRequested = false
                 self.startCore()
