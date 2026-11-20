@@ -13,8 +13,8 @@ loopback and no real Docker:
 Both record what was asked of them, so a test can say the viewer never wrote anything.
 
 And what the tests of the view and the window share: `healthy`, `today` and `not_running`,
-which make a teammate and a picture to draw; `drive`, which runs an async test; and
-`Scripted`, a source that hands out whatever snapshot it was last given.
+which make a teammate and a picture to draw; `drive`, which runs an async test; `Scripted`,
+a source that hands out whatever snapshot it was last given; and `Breaks`, one that fails.
 """
 from __future__ import annotations
 
@@ -385,4 +385,19 @@ class Scripted:
         self.stopped = True
 
     def snapshot(self):
+        return self.snap
+
+
+class Breaks(Scripted):
+    """A source that fails once it has been read `after` times: the viewer dies of it. The
+    window reads it once as it opens, so the first tick after that is the one that fails."""
+
+    def __init__(self, snap, after: int = 1):
+        super().__init__(snap)
+        self.left = after
+
+    def snapshot(self):
+        self.left -= 1
+        if self.left < 0:
+            raise RuntimeError("the source broke")
         return self.snap
