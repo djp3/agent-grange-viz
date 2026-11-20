@@ -79,12 +79,14 @@ def bound_nodes(snap: Snapshot) -> int:
     """How many teammates' granges are bound: an exchange has named who answers at their
     address (R6.19). Only GET /v1/mesh says that. Until a grange serves it, a teammate whose
     record is held stands in: their grange has reached this one. While nothing answers on
-    the local port, nothing is known to be bound.
+    the local port, nothing is known to be bound; and while this grange's image is out of
+    date it answers 503 to everything and has stopped gossiping (R5.16), so it reaches nobody
+    whatever the last picture said.
 
     Granges are counted, not columns: a teammate is one grange however many devices carry
     its name or addresses are bound to its id (a sidecar registered again beside its old
     self), so the count is of distinct names."""
-    if not snap.reachable:
+    if not snap.reachable or snap.me.image_stale:
         return 0
     if snap.has_mesh:
         return len({p.name for p in snap.peers if p.bound})

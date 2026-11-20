@@ -89,6 +89,17 @@ def test_nothing_is_bound_while_nothing_answers():
     assert main.bound_nodes(Snapshot(reachable=False, ever_reached=False)) == 0
 
 
+def test_nothing_is_bound_while_this_granges_image_is_out_of_date():
+    """Every route answers 503 then (R5.16), which is an answer: the viewer keeps the last
+    picture. But a grange with a stale image has stopped gossiping, and reaches nobody."""
+    snap = Snapshot(has_mesh=False, peers=[held("alice"), held("bob"), held("carol")])
+    assert snap.reachable and main.bound_nodes(snap) == 3
+    snap.me.image_stale = True
+    assert main.bound_nodes(snap) == 0
+    with_mesh = Snapshot(has_mesh=True, peers=[held("alice", bound=True)], me=Me(image_stale=True))
+    assert main.bound_nodes(with_mesh) == 0
+
+
 def test_the_demo_counts_its_bound_granges():
     snap = DemoSource(start=165.0).snapshot()
     bound = sum(1 for p in snap.peers if p.bound)
