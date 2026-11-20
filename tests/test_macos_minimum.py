@@ -17,7 +17,7 @@ def test_the_readme_says_what_works_below_the_minimum():
     below = readme[readme.index("**On macOS 26 (Tahoe) or earlier?**"):]
     assert "needs macOS 27.0 or later" in below.replace("\n", " ")
     assert "python3.14 -m venv .venv" in below and ".venv/bin/python main.py" in below
-    assert "Check for Updates" not in readme, "this app has no updater to speak of"
+    assert "it gets no automatic updates" in below.replace("\n", " "), "run from source, nothing updates it"
 
 
 @pytest.mark.parametrize("older", ["26.4", "26.0", "15.7.2", "13.0"])

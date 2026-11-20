@@ -1,19 +1,21 @@
 #!/bin/bash
 # Copyright (C) 2026 Don Patterson
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Cut a release of the Mac app and publish it on GitHub.
+# Cut a release of the Mac app and publish it where Sparkle looks for it.
 #
 #   scripts/release.sh               # build, notarize, publish
-#   DRY_RUN=1 scripts/release.sh     # build with the Developer ID and zip into dist/, then stop:
+#   DRY_RUN=1 scripts/release.sh     # build, zip and write the appcast into dist/, then stop:
 #                                    # nothing is sent to Apple or GitHub, nothing is tagged
 #
 # Reads VERSION, builds dist/agent-grange-viz.app signed with a Developer ID from the
 # packages in requirements.lock (a new venv, hash-checked: scripts/locked_venv.sh), notarizes
-# and staples it, zips it, tags v<VERSION>, and creates the GitHub release with the zip
-# attached and the notes in release-notes/<VERSION>.md.
-#
-# The app does not update itself (there is no Sparkle here, unlike agent-farm and
-# agent-frolic), so a release is a download: nothing installed learns of it.
+# and staples it, zips it, writes a Sparkle appcast signed with the agent-grange-viz EdDSA
+# key, tags v<VERSION>, and creates the GitHub release with the zip and appcast.xml attached.
+# The notes in release-notes/<VERSION>.md go into the appcast, where Sparkle's update
+# window shows them, and onto the GitHub release.
+# Installed apps poll https://github.com/djp3/agent-grange-viz/releases/latest/download/appcast.xml,
+# so creating the release is what ships the update. Copies from before Sparkle (0.1.1 and
+# 0.1.2) poll nothing: for them a release is still a download.
 #
 # The repository is public: the notes, like everything else in it, use made-up names.
 #
@@ -23,11 +25,18 @@
 #       xcrun notarytool store-credentials agent-grange-viz --apple-id <id> --team-id <team> --password <app-specific>
 #     (NOTARY_PROFILE=<name> uses a profile that already exists under another name), or
 #     NOTARY_KEY_ID / NOTARY_ISSUER_ID / NOTARY_KEY_FILE (an App Store Connect API key)
+#   - the Sparkle key, in the login keychain under the account agent-grange-viz. Its public
+#     half is SUPublicEDKey in macos/Info.plist:
+#       .sparkle-tools/<ver>/bin/generate_keys --account agent-grange-viz -p   # prints that public key
+#     Apps already installed accept updates signed with this key only, so keep a copy of it
+#     somewhere safe:  generate_keys --account agent-grange-viz -x <file>  exports it.
+#     SPARKLE_PRIVATE_KEY_FILE=<file> signs with an exported key instead of the keychain's.
 #   - gh logged in with push access to the repo
 #
 # Each release:
 #   echo 0.2.0 > VERSION
-#   $EDITOR release-notes/0.2.0.md      # what is new, written for people who use the app
+#   $EDITOR release-notes/0.2.0.md      # what is new, written for people who use the app;
+#                                       # Sparkle's window is small: short paragraphs and - lists
 #   git add VERSION release-notes && git commit -m "Release 0.2.0"
 #   scripts/release.sh
 set -euo pipefail
@@ -37,6 +46,7 @@ VERSION=$(tr -d '[:space:]' < VERSION)
 TAG="v$VERSION"
 REPO=${GITHUB_REPO:-djp3/agent-grange-viz}
 NOTARY_PROFILE=${NOTARY_PROFILE:-agent-grange-viz}
+SPARKLE_ACCOUNT=${SPARKLE_ACCOUNT:-agent-grange-viz}
 DRY_RUN=${DRY_RUN:-0}
 APP=dist/agent-grange-viz.app
 ZIP=dist/agent-grange-viz-$VERSION.zip
@@ -77,7 +87,14 @@ $DIRTY"
         NOTARY_ARGS=(--keychain-profile "$NOTARY_PROFILE")
     fi
 fi
+TOOLS=$(scripts/fetch_sparkle_tools.sh)
+if [ -n "${SPARKLE_PRIVATE_KEY_FILE:-}" ]; then
+    SPARKLE_KEY_ARGS=(--ed-key-file "$SPARKLE_PRIVATE_KEY_FILE")
+else
+    SPARKLE_KEY_ARGS=(--account "$SPARKLE_ACCOUNT")
+fi
 echo "identity: ${IDENTITY_NAME:-$IDENTITY} ($IDENTITY)"
+echo "sparkle tools: $TOOLS"
 
 step "locked packages"
 # The app is built from a new venv holding exactly requirements.lock, every file checked
@@ -103,15 +120,28 @@ else
     spctl --assess --type execute --verbose=2 "$APP"
 fi
 
-step "archive"
-rm -f "$ZIP"
+step "archive + appcast"
+rm -rf dist/appcast "$ZIP"
+mkdir -p dist/appcast
 ditto -c -k --keepParent "$APP" "$ZIP"
+cp "$ZIP" dist/appcast/
+# generate_appcast pairs notes with the archive whose name they share, and embeds them so the
+# signed appcast carries them; nothing else needs hosting.
+cp "$NOTES" "dist/appcast/$(basename "$ZIP" .zip).md"
+"$TOOLS/bin/generate_appcast" "${SPARKLE_KEY_ARGS[@]}" \
+    --download-url-prefix "https://github.com/$REPO/releases/download/$TAG/" \
+    --link "https://github.com/$REPO/releases" \
+    --embed-release-notes \
+    -o dist/appcast/appcast.xml dist/appcast
+grep -q "sparkle:edSignature" dist/appcast/appcast.xml || die "appcast.xml carries no EdDSA signature"
+grep -q '<description sparkle:format="markdown">' dist/appcast/appcast.xml || die "appcast.xml carries no release notes"
 { cat "$NOTES"; printf '%s\n' "$NOTES_SUFFIX"; } > dist/release-notes.md
 
 if [ "$DRY_RUN" = 1 ]; then
     echo
     echo "dry run finished; nothing was published. What a release would attach:"
     echo "  $ZIP"
+    echo "  dist/appcast/appcast.xml"
     exit 0
 fi
 
@@ -125,7 +155,7 @@ if ! { git push origin "$TAG" || { sleep 5; git push origin "$TAG"; }; }; then  
 fi
 # --generate-notes adds GitHub's "Full Changelog" link after the notes.
 if ! gh release create "$TAG" --repo "$REPO" --title "agent-grange-viz $VERSION" --generate-notes \
-        --notes-file dist/release-notes.md "$ZIP"; then
+        --notes-file dist/release-notes.md "$ZIP" dist/appcast/appcast.xml; then
     git push --delete origin "$TAG" >/dev/null 2>&1 || true
     git tag -d "$TAG" >/dev/null
     die "creating the GitHub release failed; the tag was removed again, re-run to try again"

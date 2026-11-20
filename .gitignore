@@ -11,8 +11,9 @@ settings.json
 *.tmp
 logs/
 
-# packaging output (scripts/build_app.sh)
+# packaging output (scripts/build_app.sh, scripts/release.sh)
 build/
 dist/
 macos/.build/
 macos/Resources/AppIcon.icns
+.sparkle-tools/

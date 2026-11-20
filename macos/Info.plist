@@ -34,5 +34,13 @@
 	<string>NSApplication</string>
 	<key>NSSupportsAutomaticGraphicsSwitching</key>
 	<true/>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://github.com/djp3/agent-grange-viz/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>7EoAW/GqDdaIDVvkGtBKVh6GDwn5OfiWvK66x/aap6Y=</string>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
 </dict>
 </plist>

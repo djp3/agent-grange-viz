@@ -10,17 +10,18 @@ APP=${1:?usage: sign_app.sh <app> [identity]}
 IDENTITY=${2:--}
 cd "$(dirname "$0")/.."
 
-# Developer ID builds get the hardened runtime (notarization requires it); the Python tree is
-# signed by the same team, so library validation passes, and no entitlement is asked for:
-# nothing in the app needs executable memory or anyone else's libraries. An ad-hoc signature
-# names nobody and carries no team, so an ad-hoc hardened-runtime app could not load its own
-# libraries: those builds are signed plainly instead. They run on the Mac that made them,
-# and another Mac's Gatekeeper refuses them.
+# Developer ID builds get the hardened runtime (notarization requires it); Sparkle.framework
+# and the Python tree are signed by the same team, so library validation passes, and no
+# entitlement is asked for: nothing in the app needs executable memory or anyone else's
+# libraries. An ad-hoc signature names nobody and carries no team, so an ad-hoc
+# hardened-runtime app could not load its own frameworks: those builds are signed plainly
+# instead. They run on the Mac that made them, and another Mac's Gatekeeper refuses them.
 opts=(--force)
 [ "$IDENTITY" != "-" ] && opts+=(--options runtime --timestamp)
 sign() { codesign "${opts[@]}" --sign "$IDENTITY" "$@" 2> >(grep -v "replacing existing signature" >&2); }
 
 CORE="$APP/Contents/Resources/agent-grange-viz-core"
+FW="$APP/Contents/Frameworks/Sparkle.framework"
 
 # 1. Every Mach-O in the Python tree: extension modules, dylibs, the interpreter library.
 find "$CORE/_internal" -type f \( -name "*.so" -o -name "*.dylib" -o ! -name "*.*" \) | sort | while read -r f; do
@@ -33,7 +34,14 @@ fi
 # 2. The entry executable.
 sign "$CORE/agent-grange-viz-core"
 
-# 3. The app itself.
+# 3. Sparkle: its helpers first, keeping the entitlements they ship with, then the framework.
+for b in "$FW/Versions/B/XPCServices/Downloader.xpc" "$FW/Versions/B/XPCServices/Installer.xpc" \
+         "$FW/Versions/B/Autoupdate" "$FW/Versions/B/Updater.app"; do
+    sign --preserve-metadata=entitlements "$b"
+done
+sign "$FW"
+
+# 4. The app itself.
 sign "$APP"
 codesign --verify --deep --strict "$APP"
 if [ "$IDENTITY" = "-" ]; then
