@@ -1,4 +1,4 @@
-# 📡 agent-grange-viz 🐓
+# 🐓 agent-grange-viz 📡📡📡
 
 **See whether your team's granges are talking to each other, and where it breaks when one is not.**
 
@@ -9,7 +9,7 @@ that watches the plane the status travels on, one column for every teammate's gr
 row for every layer between you and them, so the first thing that fails is the first red mark
 you read. (A grange is the hall a farming community meets in.)
 
-It is designed to work with [agent-farm](https://github.com/djp3/agent-farm),
+It works alongside [agent-farm](https://github.com/djp3/agent-farm),
 [agent-grange](https://github.com/djp3/agent-grange) and
 [agent-frolic](https://github.com/djp3/agent-frolic): see
 [below](#made-to-work-with-agent-farm-agent-grange-and-agent-frolic).
@@ -17,7 +17,7 @@ It is designed to work with [agent-farm](https://github.com/djp3/agent-farm),
 **[Download for Mac](https://github.com/djp3/agent-grange-viz/releases/latest)** · macOS 27+ on
 Apple silicon · free and open source
 
-<!-- docs/screenshot.png goes here once there is one: the window on the demo, mid-loop -->
+![agent-grange-viz on a made-up team of thirteen granges: the liveness and tailnet panels, a column for each grange with three of them breaking at gossip and one at its farm, and the diagnosis underneath](docs/screenshot.png)
 
 ### Where it breaks is where the column turns red
 
@@ -25,7 +25,7 @@ Every grange your sidecar can find gets a column, and every layer of the plane a
 headscale, the tailnet path, gossip, the record your grange holds, their farm. A column is
 green down to the first layer that fails. That cell is marked ✗, everything beneath it greys
 out as its consequence, and one word under the column names it: `timeout`, `refused`, `503`,
-`expired`, `no farm`.
+`silent`, `expired`, `no farm`. [The verdicts](#the-verdicts) lists them all.
 
 ### A closed lid, an old image and a silent farm look different
 
@@ -38,18 +38,16 @@ evidence, the requirement it comes from, and whose move it is.
 ### Your own side, too
 
 Your column is the first one. When your sidecar cannot reach headscale it turns amber and
-says the tunnels already up still work. When nothing answers on the grange's port at all, the
-last picture freezes, dimmed, and the top line says for how long, what Docker knows about the
-two containers, and that only `make up` brings them back.
+says the tunnels already up still work. When nothing answers on the grange's port, the last
+picture freezes, dimmed, and the app says what Docker knows about the two containers. And
+when your grange's image is out of date, it is up but not running: it answers 503 to
+everything and gossips with nobody. The app then says so, shows nothing the grange said
+before, and gives the fix, `make update`.
 
-When your grange's image is out of date it answers 503 to every request and gossips with
-nobody: it is up, and it is not running. The app says so on the top line, in the liveness
-panel, in your column (**stopped**) and in the diagnosis, with the fix: `make update`. It
-shows nothing the grange said before. The gossip, record and farm rows read *not known* in
-every column, because nothing keeps those values up, and a record whose age stands still
-looks like one that is live. The headscale and tailnet rows carry on, since they come from
-your sidecar, which is running; a teammate headscale calls offline still reads offline, and
-the rest get the verdict *unknown*.
+### How many granges you reach, without opening the window
+
+The title bar carries one 📡 for each teammate's grange whose record yours holds, up to ten.
+The Dock, Mission Control and the window switcher show it too.
 
 ### Every cell explains itself
 
@@ -58,10 +56,10 @@ row's name for the key to that row.
 
 ### It only reads. It shows no agents and no pull requests.
 
-Which agents are at work is agent-farm's to show, and which pull request each is on is
-agent-frolic's. This app shows the plane between them: at most a count of agents per grange,
-never a name or a state. It never pushes anything to the grange, and it changes nothing in
-Docker.
+Which agents are at work is [agent-farm](https://github.com/djp3/agent-farm)'s to show, and
+which pull request each is on is [agent-frolic](https://github.com/djp3/agent-frolic)'s. This
+app shows the plane between them: at most a count of agents per grange, never a name or a
+state. It never pushes anything to the grange, and it changes nothing in Docker.
 
 ## Install
 
@@ -72,13 +70,16 @@ Docker.
 
 The app does not update itself yet: a new release is a new download from the same page.
 
-You need macOS 27 (Golden Gate) or later on Apple silicon.
+You need macOS 27 (Golden Gate) or later on Apple silicon. To watch something real you also
+need a grange running on this Mac ([agent-grange](https://github.com/djp3/agent-grange):
+`cd docker && make up`). Without one the app says so, and **Viewer ▸ Show the Demo** (⌘D)
+shows a made-up team instead.
 
 **On macOS 26 (Tahoe) or earlier?** The app carries its own copy of Python, and that copy is
-built for macOS 27, so the app can't run on an earlier macOS. macOS will refuse to open it
-and say it needs macOS 27.0 or later. The viewer itself doesn't need macOS 27, so you can run
-it from source in a terminal instead. Install Python 3.14 (python.org's installer runs on earlier
-macOS versions), then:
+built for macOS 27, so the app can't run on an earlier macOS: macOS refuses to open it and
+says it needs macOS 27.0 or later. The viewer itself doesn't need macOS 27, so you can run it
+from source in a terminal instead. Install Python 3.14 (python.org's installer runs on
+earlier macOS versions), then:
 
     git clone https://github.com/djp3/agent-grange-viz.git && cd agent-grange-viz
     python3.14 -m venv .venv && .venv/bin/pip install -r requirements.txt
@@ -87,16 +88,13 @@ macOS versions), then:
 Run that way, it has no window or menus of its own (`--demo` and `--port N` stand in for the
 Viewer menu), `git pull` brings it up to date, and its settings and log stay in that folder.
 
-To watch something real you also need a grange running on this Mac
-([agent-grange](https://github.com/djp3/agent-grange): `cd docker && make up`). Without one
-the app says so, and **Viewer ▸ Show the Demo** (⌘D) shows a made-up team instead.
-
 ## The window
 
-From top to bottom:
+Under the title bar, from top to bottom:
 
 - **The top line**: this Mac's grange (its id, tailnet address, group, incarnation and
-  cursor), how many granges were found and how many are live, and the clock.
+  cursor), how many granges were found and how many are live, and the clock. When the grange
+  cannot be reached, or is not running, this line says that instead.
 - **Two panels.** On the left, **liveness**: every record's seen age as a dot on an axis from
   0 to 60 seconds, the expiry wall at its end, with the slow ones named, what has no record
   and why, what expired, left, restarted or joined in the last five minutes, and the oldest
@@ -112,13 +110,13 @@ From top to bottom:
   you can fix is yellow. Sources that are no teammate at all (a device without the grange's
   tag, refused by the identity check) are listed here too.
 
-The title bar reads 🐓 agent-grange-viz and the version (v0.1.1, say), then one 📡 for each
-teammate's grange that is bound and whose record yours still holds, up to ten, so the Dock,
-Mission Control and the window switcher show how many granges yours reaches. A grange is
-bound once an exchange has named who answers at its address. Only `GET /v1/mesh` says that,
-so where the grange has not answered it a record held is enough. A teammate whose record has
-expired or left has no dish, a teammate on two devices has one, and there are none while
-nothing answers on the grange's port or its image is out of date.
+The title bar reads 🐓 agent-grange-viz and its version, then one 📡 for each teammate's
+grange that is bound and whose record yours still holds, up to ten, so the Dock, Mission
+Control and the window switcher show how many granges yours reaches. A grange is bound once
+an exchange has named who answers at its address. Only `GET /v1/mesh` says that, so where the
+grange has not answered it a record held is enough. A teammate whose record has expired or
+left has no dish, a teammate on two devices has one, and there are none while nothing answers
+on the grange's port or its image is out of date.
 
 ### The rows
 
@@ -133,6 +131,30 @@ nothing answers on the grange's port or its image is out of date.
 In your own column the tailnet cell is your sidecar's state: ★ ok, ◐ it cannot reach
 headscale, ✗ the grange cannot reach its socket, or it is logged out. While your sidecar
 cannot answer, every other tailnet cell is last known, and greys out to say so.
+
+A cell that reads `· not known` is one nothing can vouch for: its tip says why.
+
+### The verdicts
+
+| verdict | the column breaks at | what it means |
+|---------|----------------------|---------------|
+| `ok` | nowhere | every layer holds |
+| `offline` | tailnet | headscale says the device is gone: laptop off, sidecar stopped, or removed |
+| `timeout` | gossip | no exchange is answered; with headscale still saying online, a lid is probably shut |
+| `refused` | gossip | it answers 409 or 403: another group or protocol, or not a tagged grange |
+| `outdated` | gossip | it answers 503: its image is out of date, and they need `make update` |
+| `silent` | record | its record is still held and has not been refreshed for 45 seconds; it expires at 60 |
+| `expired`, `left`, `gone` | record | the record went: it timed out, their grange said goodbye, or (where only `GET /v1/mesh` could tell) one of the two |
+| `no body` | record | a device with the grange's tag, and no record for it |
+| `no farm` | farm | their grange is alive and their agent-farm has stopped reporting to it |
+| `quiet`, `farm` | (degraded) | a record or a farm that is late, not yet lost |
+| `unknown` | (not known) | your own grange is not running, so only the tailnet row can be judged |
+
+Your own column reads `you`, or in yellow what only you can fix: `stopped` (your image is out
+of date), `fix me` (your grange has not gossiped in a while), `no farm`, `dup id` (another
+grange runs with your id), or your sidecar's state.
+
+In a narrow column a verdict is cut to fit: `t/o`, `refuse`, `503`, `gone`, `farm`.
 
 ### Keys
 
@@ -150,7 +172,20 @@ speed.
 
 The View menu changes the text size (⌘+ / ⌘-), picks any fixed-pitch font installed on the
 Mac, and toggles font smoothing; the window remembers all of that with its size and place.
-**Viewer ▸ Restart Viewer** (⌘R) starts it again.
+
+### When your own grange is the problem
+
+| what you see | what is happening | the fix |
+|--------------|-------------------|---------|
+| the last picture, dimmed, and "nothing answers on 127.0.0.1:7788" | the grange's port is closed: the containers are stopped, or the sidecar is and took the grange's network with it | `cd docker && make up` |
+| "the grange is not running", and *not known* in the gossip, record and farm rows | its image is behind the tag, so it answers 503 to everything and gossips with nobody | `cd docker && make update` |
+| your tailnet cell amber, `no control` | tailscaled cannot reach headscale; tunnels already up keep working | nothing, unless it lasts |
+| your tailnet cell red, `no socket` | the grange cannot reach its sidecar's socket: discovery is frozen and incoming exchanges are refused | `docker compose logs tailscale`; `make up` if it stays wedged |
+| your tailnet cell red, `logged out` | tailscaled is logged out: no tailnet at all | ask whoever runs headscale whether the node was removed, then `make up` |
+
+While the grange is not running the app shows nothing it said before. Nothing keeps those
+values up, and a record whose age stands still looks like one that is live. The headscale and
+tailnet rows carry on, since they come from your sidecar.
 
 ## Where each row comes from
 
@@ -172,9 +207,9 @@ their tips say that this is why; they fill in the moment it answers.
 [docs/openapi.yaml](docs/openapi.yaml) is the specification of the route, and
 [docs/data-sources.md](docs/data-sources.md) is the survey behind it.
 
-**The demo** fills every row now. `--demo` (or **Viewer ▸ Show the Demo**) runs a made-up
-team of thirteen granges through a four-minute loop: a lid closes, a path falls back to DERP,
-a private build is refused, a teammate joins, a farm goes quiet, a grange restarts, a device
+**The demo** fills every row. `--demo` (or **Viewer ▸ Show the Demo**) runs a made-up team of
+thirteen granges through a four-minute loop: a lid closes, a path falls back to DERP, a
+private build is refused, a teammate joins, a farm goes quiet, a grange restarts, a device
 without the tag knocks, an image goes stale, headscale becomes unreachable, the grange loses
 its sidecar's socket, and the sidecar container stops. Every name and number in it is
 invented, and the screen says so.
@@ -182,8 +217,8 @@ invented, and the screen says so.
 ## What it reads, and what it never does
 
 - **The grange's local API**, on `127.0.0.1` and the port in the settings (7788 unless you
-  changed `GRANGE_PORT`): `GET /health`, `GET /v1/agents`, `GET /version`. It never sends
-  `PUT /v1/farm`: that is agent-farm's voice, and the app has none.
+  changed `GRANGE_PORT`): the four `GET` routes above. It never sends `PUT /v1/farm`: that is
+  agent-farm's voice, and the app has none.
 - **The Docker socket**, if you allow it (you do by default): it lists the two agent-grange
   containers and their state, and runs `tailscale status` and `tailscale ping` inside the
   sidecar. It starts, stops and changes nothing. Turn it off with `"use_docker": false` in
@@ -227,6 +262,10 @@ work. Each of the other three works without it:
 Run from a checkout, both stay next to the code instead (`settings.json`, `logs/`), ignored
 by git. **Viewer ▸ Open Log Folder** and **Reveal Settings File** open them.
 
+The log records what changed about reaching the grange and its sidecar, why anything failed,
+and any crash; never who is on the board. If the viewer inside the window ever stops, the
+window says so and **Viewer ▸ Restart Viewer** (⌘R) starts it again.
+
 The settings file holds three things, and no secret (the app has none):
 
 | key | default | meaning |
@@ -239,46 +278,22 @@ A key the file gets wrong is ignored, and the default used.
 
 ## How it works
 
-It is a Python program (Textual) running inside a native window (SwiftTerm), the way
-agent-farm and agent-frolic are, and beyond Textual it uses only Python's standard library.
-To run it from source:
+The grange answers on a local port. `GET /v1/agents` is held open on the grange's cursor for
+a second at a time, so a change arrives at once and the ages stay fresh; `GET /health` is
+read every two seconds, and `GET /v1/mesh` is asked when the app starts and once a minute.
 
-```sh
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt -r requirements-build.txt
-.venv/bin/python main.py             # the grange on 127.0.0.1:7788
-.venv/bin/python main.py --port 17981
-.venv/bin/python main.py --demo      # a made-up team, every row filled
-.venv/bin/python -m pytest           # the tests: no network, no real settings
-```
+The sidecar is asked through the Docker socket, by running commands inside its container:
+`tailscale status` and the two containers' state every five seconds, one `tailscale ping` a
+second in turn over the peers that are online, and the byte counters every fifteen seconds.
 
-**The minimum macOS is 27**, declared in `macos/Info.plist` (`LSMinimumSystemVersion`, which
-Finder checks before it opens the app) and in `macos/Package.swift`, which the Swift
-executable records as its own. It follows the bundled Python: releases are built with
-Homebrew's, which Homebrew builds for the macOS it runs on, so nearly every part of the Python
-tree records macOS 27 as its minimum. `scripts/check_min_macos.py`, the check agent-farm and
-agent-frolic share, holds the whole app to that before it is signed: the build stops when any
-Apple-silicon binary inside needs more than `Info.plist` says, or when the app's own
-executable records another minimum than it. When the build Mac moves to a newer macOS and
-Homebrew's Python follows, it lists the files that need more; then either raise the minimum
-in both files and here, or build with a Python made for older systems (python.org's
-installer). `scripts/build_app.sh` also stops at once on a macOS before 27, and says what
-works there.
+What neither source keeps, the app works out from one reading to the next: a record that
+disappears close to the 60 second limit expired, and one that disappears early left; a path
+that changes between direct and DERP is an event. It remembers five minutes of those, in
+memory only.
 
-An app built for macOS 27 gets its window's title at the left of the title bar, beside the
-buttons, and macOS has no setting for that. `macos/Sources/AgentGrangeViz/CenteredTitle.swift`,
-the same file as in the other two apps, hides the system's title and draws a label in the
-middle of the bar in its place; the window keeps its title for the Dock, Mission Control and
-VoiceOver.
-
-`scripts/build_app.sh` builds the Mac app: PyInstaller makes the Python side, `swift build`
-the window, and the result is signed ad-hoc, which is enough to run it on the Mac that built
-it (it needs Python 3.14 and Xcode's command line tools, and says so and builds nothing on a
-macOS before 27). `scripts/release.sh` cuts a release: the same build from the lock, signed
-with a Developer ID under the hardened runtime, notarized by Apple, stapled, zipped, tagged
-`v<VERSION>` and published on GitHub with the notes in `release-notes/`. `requirements.lock` pins everything with hashes,
-and `scripts/locked_venv.sh` makes a virtual environment holding exactly that. The icon is
-drawn in `macos/Resources/icon.svg`; `scripts/render_icon.sh` renders it (it needs
-`rsvg-convert`), and a build only checks that the rendering is current.
+The app is a Python program (Textual) running inside a native window (SwiftTerm), the way
+agent-farm and agent-frolic are; see [DEVELOPMENT.md](DEVELOPMENT.md) to run it from source,
+build the app or cut a release.
 
 ## License
 
