@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import stack
 from demo import DemoSource
-from model import Docker, Event, Gone, Gossip, Me, Peer, Record, Sidecar, Snapshot, Tailnet
+from model import Docker, Event, Gone, Gossip, Peer, Record, Sidecar, Snapshot, Tailnet
+from standins import healthy, today
 
 
 def demo_at(t: float) -> Snapshot:
@@ -17,22 +18,6 @@ def col(cols: list, name: str) -> stack.Column:
     found = [c for c in cols if c.name == name]
     assert len(found) == 1, f"{name}: {len(found)} columns"
     return found[0]
-
-
-def today(peers=(), **kw) -> Snapshot:
-    """A Snapshot as today's grange plus Docker fills it: no /v1/mesh, so no gossip, no rev."""
-    me = Me(gid="djp3", incarnation=1795040341941, cursor=12, farm_age=5.0, agents=3, last_gossip_age=2.0,
-            rejected={"proto": 0, "group": 0, "identity": 0, "overflow": 0}, peers_discovered=len(peers),
-            peers_live=len(peers), built="bf6e87e", tag_commit="bf6e87e")
-    return Snapshot(me=me, sidecar=Sidecar(state="ok", home_derp="headscale"), peers=list(peers),
-                    has_mesh=False, has_sidecar=True, **kw)
-
-
-def healthy(name: str, **kw) -> Peer:
-    return Peer(key=f"100.64.0.9:7789-{name}", name=name, address="100.64.0.9:7789", hostname=f"grange-{name}",
-                tailnet=Tailnet(online=True, path="direct", endpoint="192.168.1.9:41641", rtt_ms=4.2,
-                                handshake_age=40.0),
-                record=Record(seen_age=3.0, farm_age=8.0, farm_stale=False, agents=2), **kw)
 
 
 # ------------------------------------------------------------------------------- the demo's moments

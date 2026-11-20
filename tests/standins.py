@@ -11,6 +11,10 @@ loopback and no real Docker:
                (create, start with the framed stream, exit code) answering from a script
 
 Both record what was asked of them, so a test can say the viewer never wrote anything.
+
+And what the tests of the view and the window share: `healthy` and `today`, which make a
+teammate and a picture to draw; `drive`, which runs an async test; and `Scripted`, a source
+that hands out whatever snapshot it was last given.
 """
 from __future__ import annotations
 
@@ -319,3 +323,55 @@ class FakeDocker:
         self.server.shutdown()
         self.server.server_close()
         shutil.rmtree(self.dir, ignore_errors=True)
+
+
+# ---- for the tests of the view and the window ------------------------------------------------------
+def healthy(name: str, **kw):
+    """A teammate with nothing wrong: online, a direct path, a fresh record. Keyword
+    arguments are the Peer's own (bound=True, gossip=...)."""
+    from model import Peer, Record, Tailnet
+    return Peer(key=f"100.64.0.9:7789-{name}", name=name, address="100.64.0.9:7789", hostname=f"grange-{name}",
+                tailnet=Tailnet(online=True, path="direct", endpoint="192.168.1.9:41641", rtt_ms=4.2,
+                                handshake_age=40.0),
+                record=Record(seen_age=3.0, farm_age=8.0, farm_stale=False, agents=2), **kw)
+
+
+def today(peers=(), **kw):
+    """A Snapshot as today's grange plus Docker fills it: no /v1/mesh, so no gossip, no rev.
+    Keyword arguments are the Snapshot's own; has_mesh=True gives the picture a grange that
+    serves the mesh would."""
+    from model import Me, Sidecar, Snapshot
+    me = Me(gid="djp3", incarnation=1795040341941, cursor=12, farm_age=5.0, agents=3, last_gossip_age=2.0,
+            rejected={"proto": 0, "group": 0, "identity": 0, "overflow": 0}, peers_discovered=len(peers),
+            peers_live=len(peers), built="bf6e87e", tag_commit="bf6e87e")
+    kw.setdefault("has_mesh", False)
+    kw.setdefault("has_sidecar", True)
+    return Snapshot(me=me, sidecar=Sidecar(state="ok", home_derp="headscale"), peers=list(peers), **kw)
+
+
+def drive(test):
+    """Run an async test with plain pytest, the way agent-farm's and agent-frolic's UI tests do."""
+    import asyncio
+    import functools
+
+    @functools.wraps(test)
+    def run(*args, **kwargs):
+        return asyncio.run(test(*args, **kwargs))
+    return run
+
+
+class Scripted:
+    """A source that hands out whatever snapshot it was last given."""
+
+    def __init__(self, snap):
+        self.snap = snap
+        self.started = self.stopped = False
+
+    def start(self) -> None:
+        self.started = True
+
+    def stop(self) -> None:
+        self.stopped = True
+
+    def snapshot(self):
+        return self.snap

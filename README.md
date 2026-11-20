@@ -103,6 +103,14 @@ From top to bottom:
   you can fix is yellow. Sources that are no teammate at all (a device without the grange's
   tag, refused by the identity check) are listed here too.
 
+The title bar reads 🐓 agent-grange-viz and the version (v0.1.1, say), then one 📡 for each
+teammate's grange that is bound and whose record yours still holds, up to ten, so the Dock,
+Mission Control and the window switcher show how many granges yours reaches. A grange is
+bound once an exchange has named who answers at its address. Only `GET /v1/mesh` says that,
+so until the grange serves it a record held is enough. A teammate whose record has expired or
+left has no dish, a teammate on two devices has one, and there are none while nothing answers
+on the grange's port or its image is out of date.
+
 ### The rows
 
 | row | first line | second line |
