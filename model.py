@@ -7,10 +7,10 @@ from a simulation); the views read Snapshots and nothing else.
 
 Two rules hold everywhere:
 
-  • None means "not known from the sources at hand", never "zero" or "no". Today's grange
-    (GET /health, /v1/agents, /version) knows nothing per peer about gossip, and neither rev
-    nor counter; those arrive with GET /v1/mesh (docs/openapi.yaml). The views draw None as
-    "needs /v1/mesh" rather than guessing.
+  • None means "not known from the sources at hand", never "zero" or "no". GET /health,
+    /v1/agents and /version say nothing per peer about gossip, and neither rev nor counter;
+    those come from GET /v1/mesh (docs/openapi.yaml). Where a grange has not answered it the
+    views draw None as "not known" rather than guessing.
   • Every time is an age in seconds, already worked out by the source at the moment the
     Snapshot was built. Nothing here is a timestamp, so nothing depends on anybody's clock.
 
@@ -107,7 +107,7 @@ class Peer:
     hostname: str = ""                   # the sidecar's hostname, grange-<id>
     bound: Optional[bool] = None         # an exchange has named who answers there (R6.19); None: unknown
     tailnet: Optional[Tailnet] = None    # None: no sidecar data at all
-    gossip: Optional[Gossip] = None      # None: needs /v1/mesh
+    gossip: Optional[Gossip] = None      # None: not known (it comes from /v1/mesh)
     record: Optional[Record] = None      # None: no record held (see gone)
     gone: Optional[Gone] = None
     back_kind: str = ""                  # restart · readmit · join, when that happened lately
@@ -150,6 +150,7 @@ class Me:
     longpolls: Optional[int] = None      # long-polls held on /v1/agents (/v1/mesh)
     duplicate_id: bool = False
     image_stale: bool = False            # the kill-switch tag moved: every route answers 503
+    stale_for: Optional[float] = None    # how long it has answered 503, as far as the viewer saw
     built: str = ""                      # the commit this image was built from
     tag_commit: str = ""                 # the commit the tag points at, when the grange says
     fresh_polls: int = 0
@@ -198,6 +199,13 @@ class Snapshot:
     port: int = DEFAULT_PORT
     clock: str = ""                      # for the top line: wall time, or the demo's place in its loop
     note: str = ""                       # one line a source wants shown, e.g. why Docker is unavailable
+
+    @property
+    def refusing(self) -> bool:
+        """The grange answers, and refuses everything: its image is out of date, so every route
+        is 503 and it gossips with nobody (R5.16). It is not running in any way that matters,
+        and nothing it said before is known to be true now."""
+        return self.reachable and self.me.image_stale
 
 
 class Source(Protocol):

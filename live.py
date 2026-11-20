@@ -1,17 +1,17 @@
 # Copyright (C) 2026 Don Patterson
 # SPDX-License-Identifier: GPL-3.0-or-later
 """
-The live source: Snapshots of a real grange and its sidecar, from what exists today.
+The live source: Snapshots of a real grange and its sidecar.
 
   the grange   GET /v1/agents, /health and /version on 127.0.0.1:<port>   (grangeapi.py)
   the sidecar  tailscale status, ping and metrics, through `docker exec`   (sidecar.py)
   Docker       the two containers' state, for when nothing answers         (sidecar.py)
 
-and GET /v1/mesh as soon as the grange has it (docs/openapi.yaml): it is probed at start and
-once a minute, and when it answers it replaces the join below and fills what today's API
-cannot know (gossip per address, bindings, roles, rev and counter, the forget map).
+and GET /v1/mesh when the grange answers it (docs/openapi.yaml): it is asked at start and
+once a minute, and when it answers it replaces the join below and fills what the three routes
+above cannot say (gossip per address, bindings, roles, rev and counter, the forget map).
 
-Until then a column is made by joining two lists that know nothing of each other: the records
+Without it a column is made by joining two lists that know nothing of each other: the records
 in /v1/agents, keyed by grange id, and the tagged devices in the sidecar's status, whose
 hostname grange-<id> is a hint of the id (R6.19). A device with no record and a record with no
 device each get a column of their own.
@@ -31,8 +31,14 @@ back is a "readmit", a first appearance a "join"; a path that changes between di
 and a sidecar that changes state, are events too. Events are kept five minutes.
 
 snapshot() only reads what the threads cached and works every age out as of now, so ages tick
-between reads. When nothing answers (or the image is stale and every route says 503) the last
-picture is kept and its ages stop where they were: the view freezes and dims it.
+between reads. When nothing answers, the last picture is kept and its ages stop where they
+were: the view freezes and dims it.
+
+When the image is out of date, every route answers 503 and the grange gossips with nobody
+(R5.16). That is an answer, so the grange is reachable; but nothing keeps up what it said
+before, and a record whose age stands still reads as live. So the Snapshot then holds none of
+it, whichever route it came from: no record, no farm, no gossip, no count. It holds that the
+image is stale and for how long, and what the sidecar still says through Docker.
 
 The poll_*() methods each do one round and are what the threads loop on; tests call them
 directly with a clock of their own.
@@ -109,6 +115,7 @@ class LiveSource:
         self._health_due = now
         self._version: Optional[dict] = None
         self._stale: Optional[dict] = None           # the 503 body while the image is out of date
+        self._stale_at: Optional[float] = None       # since when, as far as this source saw
         self._mesh: Optional[dict] = None
         self._mesh_at = now
         self._mesh_due = now
@@ -247,6 +254,7 @@ class LiveSource:
             now = self._clock()
             self._reachable, self._ever, self._lost_at = True, True, None
             if self._stale is None:
+                self._stale_at = now
                 self._event(now, "refused", self._gid(), False, 503,
                             "this grange's image is out of date: every route answers 503 (R5.16)")
             self._stale = body
@@ -264,7 +272,7 @@ class LiveSource:
             now = self._clock()
             first = self._picture is None
             self._reachable, self._ever, self._lost_at = True, True, None
-            self._stale, self._frozen_at = None, None
+            self._stale, self._stale_at, self._frozen_at = None, None, None
             incarnation, cursor = body.get("incarnation"), body.get("cursor")
             # A restart starts the cursor again from 1 with a new incarnation (R5.8). A new
             # incarnation with the cursor carrying on, and no gap in contact, is a correction (R4.8).
@@ -386,16 +394,18 @@ class LiveSource:
             snap.reachable = self._reachable
             snap.ever_reached = self._ever
             snap.unreachable_for = None if self._reachable or self._lost_at is None else now - self._lost_at
-            snap.has_mesh = self._has_mesh and self._mesh is not None
+            stale = self._stale is not None           # 503 on every route: nothing it said is handed on
+            snap.has_mesh = self._has_mesh and self._mesh is not None and not stale
             status_fresh = (self._status is not None and self._status_ok
                             and now - self._status_at < 3 * self.status_every)
             snap.has_sidecar = status_fresh or bool(snap.has_mesh and self._mesh.get("tailnet"))
             # how old the picture's own ages have become; they stop where the picture froze
             pic_extra = (self._frozen_at or now) - self._picture_at
-            snap.me = self._me(now, pic_extra)
-            snap.sidecar = self._sidecar(now)
+            snap.me = self._me_stale(now) if stale else self._me(now, pic_extra)
+            snap.sidecar = self._sidecar(now, snap.has_mesh)
             snap.docker = self._docker_now(now)
-            snap.peers = self._peers_mesh(now) if snap.has_mesh else self._peers_joined(now, pic_extra, status_fresh)
+            snap.peers = (self._peers_mesh(now) if snap.has_mesh else
+                          self._peers_joined(now, pic_extra, status_fresh, records=not stale))
             snap.events = [Event(now - at, kind, peer, ok, status, note)
                            for at, kind, peer, ok, status, note in self._events if now - at <= EVENTS_S]
             if snap.has_mesh:                         # refusals of sources that are no discovered address
@@ -433,15 +443,22 @@ class LiveSource:
             me.fresh_unchanged = int(fresh.get("consecutive_unchanged_polls") or 0)
             me.fresh_summary = fresh.get("last_summary") or ""
         me.built = ((self._version or {}).get("commit") or "")[:7]
-        if self._stale is not None:
-            me.image_stale = True
-            me.built = (self._stale.get("built_commit") or me.built)[:7]
-            me.tag_commit = (self._stale.get("tag_commit") or "")[:7]
-            me.fresh_summary = self._stale.get("summary") or me.fresh_summary
         if self._status is not None and self._status["self"]["ip"]:
             me.address = f"{self._status['self']['ip']}:{GOSSIP_PORT}"
         if self._has_mesh and self._mesh:
             self._me_mesh(me, self._mesh, (self._frozen_at or now) - self._mesh_at)
+        return me
+
+    def _me_stale(self, now: float) -> Me:
+        """This grange while its image is out of date: who it is, where, what the 503 says,
+        and for how long. Nothing it counted or held before."""
+        stale = self._stale or {}
+        me = Me(gid=self._gid(), image_stale=True,
+                stale_for=None if self._stale_at is None else now - self._stale_at,
+                built=(stale.get("built_commit") or (self._version or {}).get("commit") or "")[:7],
+                tag_commit=(stale.get("tag_commit") or "")[:7], fresh_summary=stale.get("summary") or "")
+        if self._status is not None and self._status["self"]["ip"]:
+            me.address = f"{self._status['self']['ip']}:{GOSSIP_PORT}"
         return me
 
     @staticmethod
@@ -465,7 +482,7 @@ class LiveSource:
         if isinstance(mesh.get("rejected"), dict):
             me.rejected = dict(mesh["rejected"])
 
-    def _sidecar(self, now: float) -> Sidecar:
+    def _sidecar(self, now: float, mesh: bool) -> Sidecar:
         sc = Sidecar(state=self._side_state,
                      since=None if self._side_since is None else now - self._side_since,
                      path_bytes=dict(self._path_bytes))
@@ -473,7 +490,7 @@ class LiveSource:
             sc.health = tuple(self._status["health"])
             sc.backend = self._status["backend"]
             sc.home_derp = self._status["self"]["relay"]
-        if self._has_mesh and self._mesh:
+        if mesh:                                     # the grange's own word on its sidecar, while it gives one
             tailnet = self._mesh.get("tailnet")
             if not tailnet or tailnet.get("reachable") is False or tailnet.get("state") == "no-socket":
                 sc.state = "no-socket"               # the grange itself cannot reach its sidecar
@@ -492,21 +509,26 @@ class LiveSource:
                     sc.path_bytes = dict(tailnet["bytes"])
         return sc
 
-    # ---- columns from today's API: records joined to the sidecar's tagged devices
-    def _peers_joined(self, now: float, pic_extra: float, status_fresh: bool) -> list:
+    # ---- columns without the mesh: records joined to the sidecar's tagged devices
+    def _peers_joined(self, now: float, pic_extra: float, status_fresh: bool, records: bool = True) -> list:
+        """With `records` False (the image is stale) only the sidecar's devices: no record, no
+        mark of one that went, and no column for a grange that was a record and nothing else."""
         pic = self._picture or {}
         me = pic.get("grange")
-        records = {g.get("grange"): g for g in pic.get("granges") or () if g.get("grange") != me}
         peers, used = [], set()
         status_extra = now - self._status_at
         if self._status is not None:
             for dev in self._status["peers"]:
                 name = _name_of(dev["hostname"]) or dev["ip"]
-                peer = Peer(key=f"{dev['ip']}:{GOSSIP_PORT}", name=name, address=f"{dev['ip']}:{GOSSIP_PORT}",
-                            hostname=dev["hostname"], tailnet=self._tailnet(dev, now, status_extra, not status_fresh))
-                self._fill(peer, name, records.get(name), now, pic_extra)
+                peers.append(Peer(key=f"{dev['ip']}:{GOSSIP_PORT}", name=name, address=f"{dev['ip']}:{GOSSIP_PORT}",
+                                  hostname=dev["hostname"],
+                                  tailnet=self._tailnet(dev, now, status_extra, not status_fresh)))
                 used.add(name)
-                peers.append(peer)
+        if not records:
+            return peers
+        records = {g.get("grange"): g for g in pic.get("granges") or () if g.get("grange") != me}
+        for peer in peers:
+            self._fill(peer, peer.name, records.get(peer.name), now, pic_extra)
         for gid, g in records.items():
             if gid not in used:
                 peer = Peer(key=gid, name=gid)

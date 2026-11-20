@@ -248,25 +248,68 @@ def test_a_grange_never_reached_says_so(docker):
     assert "publishes port" in src.snapshot().note       # Docker is there; our sidecar is not
 
 
-def test_a_stale_image_is_shown_not_lost(grange):
-    grange.set_granges([entry("alice", seen=2.0)])
-    src, clock = source(grange)
-    src.poll_api()
+def test_a_stale_image_stops_the_grange_and_nothing_it_said_is_handed_on(grange, docker):
+    """The tag moved: every route answers 503 and the grange gossips with nobody (R5.16).
+    Nothing keeps up what it said before, so none of it is in the Snapshot. What the sidecar
+    says through Docker still is."""
+    grange.set_granges([entry("alice", seen=2.0, farm=8.0, agents=3), entry("bob", seen=4.0)])
+    grange.health.update(peers_discovered=2, peers_live=2, last_gossip_age_s=0.5)
+    devices(docker, dev("alice", 6, cur_addr="192.168.1.26:41641", handshake=WALL - 40))
+    src, clock = source(grange, docker)
+    assert src.poll_api() and src.poll_sidecar()
+    before = src.snapshot()
+    assert not before.refusing and by_name(before)["alice"].record is not None and before.me.agents == 1
     clock.tick(3)
-    grange.stale = STALE_BODY                            # the tag moved: every route answers 503 (R5.16)
+    grange.stale = STALE_BODY                            # the tag moved
     assert src.poll_api() is False
     clock.tick(10)
     src.poll_api()
+    src.poll_sidecar()
     snap = src.snapshot()
-    assert snap.reachable and snap.unreachable_for is None
-    assert snap.me.image_stale and snap.me.built == "bf6e87e" and snap.me.tag_commit == "c0ffee1"
-    assert snap.me.fresh_summary == "the tag moved past this image"
-    assert by_name(snap)["alice"].record.seen_age == pytest.approx(5.0)    # the picture stopped when it did
-    assert [(e.kind, e.status) for e in snap.events] == [("refused", 503)]
+    assert snap.reachable and snap.unreachable_for is None and snap.refusing
+    me = snap.me
+    assert me.image_stale and me.built == "bf6e87e" and me.tag_commit == "c0ffee1"
+    assert me.fresh_summary == "the tag moved past this image"
+    assert me.stale_for == pytest.approx(10.0)
+    assert me.gid == "djp3" and me.address == "100.64.0.5:7789"           # who and where: still true
+    assert me.farm_age is None and me.last_gossip_age is None and me.agents == 0 and me.cursor == 0
+    assert me.peers_live is None and me.peers_discovered is None
+    peers = by_name(snap)
+    assert set(peers) == {"alice"}, "bob was a record and no device: nothing says he is there now"
+    alice = peers["alice"]
+    assert alice.record is None and alice.gone is None and alice.gossip is None and alice.back_age is None
+    assert alice.tailnet.online and alice.tailnet.path == "direct" and not alice.tailnet.stale
+    assert snap.has_sidecar and snap.sidecar.state == "ok"
+    assert ("refused", 503) in [(e.kind, e.status) for e in snap.events]
+    clock.tick(50)
+    assert src.snapshot().me.stale_for == pytest.approx(60.0)
     grange.stale = None                                  # make update
     src.poll_api()
     snap = src.snapshot()
-    assert not snap.me.image_stale and by_name(snap)["alice"].record.seen_age == pytest.approx(2.0)
+    assert not snap.refusing and snap.me.stale_for is None
+    assert by_name(snap)["alice"].record.seen_age == pytest.approx(2.0) and "bob" in by_name(snap)
+
+
+def test_a_stale_image_with_no_docker_leaves_only_that_it_is_stale(grange):
+    grange.set_granges([entry("alice", seen=2.0)])
+    src, clock = source(grange)
+    src.poll_api()
+    grange.stale = STALE_BODY
+    src.poll_api()
+    clock.tick(4)
+    snap = src.snapshot()
+    assert snap.refusing and snap.peers == [] and not snap.has_sidecar
+    assert snap.me.image_stale and snap.me.stale_for == pytest.approx(4.0)
+
+
+def test_a_grange_first_met_with_a_stale_image_is_refusing_not_waiting(grange):
+    grange.stale = STALE_BODY
+    src, clock = source(grange)
+    assert src.poll_api() is False
+    clock.tick(2)
+    snap = src.snapshot()
+    assert snap.reachable and snap.ever_reached and snap.refusing
+    assert snap.me.built == "bf6e87e" and snap.me.stale_for == pytest.approx(2.0) and snap.peers == []
 
 
 def test_a_restart_is_one_event_not_a_board_of_joins(grange):
@@ -471,6 +514,32 @@ def test_mesh_slots_in_when_the_grange_has_it(grange):
     assert me.rejected == {"proto": 0, "group": 9, "identity": 1, "overflow": 0}
     assert snap.sidecar.state == "ok" and snap.sidecar.home_derp == "headscale"
     assert snap.sidecar.path_bytes == {"direct": 1882113, "derp": 20211}
+
+
+def test_a_stale_image_drops_what_the_mesh_said_too(grange, docker):
+    """With the mesh the tailnet values are the grange's own relay of its sidecar. Once it
+    refuses everything they are as old as the rest: the sidecar is asked through Docker."""
+    grange.set_granges([entry("alice", seen=0.8, agents=5)])
+    grange.mesh = MESH
+    devices(docker, dev("alice", 6, cur_addr="192.168.1.26:41641", handshake=WALL - 40))
+    src, clock = source(grange, docker)
+    assert src.poll_api() and src.poll_sidecar()
+    before = src.snapshot()
+    assert before.has_mesh and by_name(before)["judy"].gossip.failing and before.me.rev == 14
+    grange.stale = STALE_BODY
+    assert src.poll_api() is False
+    clock.tick(5)
+    src.poll_sidecar()
+    snap = src.snapshot()
+    assert snap.refusing and not snap.has_mesh
+    assert set(by_name(snap)) == {"alice"}, "judy and frank were the grange's to name"
+    alice = by_name(snap)["alice"]
+    assert alice.gossip is None and alice.record is None and alice.bound is None
+    assert alice.tailnet.path == "direct" and alice.tailnet.handshake_age == pytest.approx(45.0, abs=0.5)
+    assert snap.me.rev is None and snap.me.sent is None and snap.me.group == "" and snap.strangers == []
+    grange.stale = None                                  # make update
+    assert src.poll_api()
+    assert src.snapshot().has_mesh and by_name(src.snapshot())["alice"].gossip is not None
 
 
 def test_mesh_says_when_the_grange_lost_its_sidecar(grange):

@@ -100,7 +100,7 @@ def bound_nodes(snap: Snapshot) -> int:
     """How many teammates' granges this one reaches: those that are bound (an exchange has
     named who answers at their address, R6.19) and whose record is still held. A binding is
     never cleared, so by itself it outlives the grange it named; the record is what expires
-    when a teammate goes away. Only GET /v1/mesh says who is bound. Until a grange serves it,
+    when a teammate goes away. Only GET /v1/mesh says who is bound. Where a grange has not answered it,
     a record held is all there is to go by, and is enough. While nothing answers on
     the local port, nothing is known to be bound; and while this grange's image is out of
     date it answers 503 to everything and has stopped gossiping (R5.16), so it reaches nobody
@@ -250,8 +250,9 @@ class GrangeViz(App):
         if before.sidecar.state != now.sidecar.state:
             log.info("sidecar: %s (was %s)%s", now.sidecar.state, before.sidecar.state,
                      f": {', '.join(now.sidecar.health)}" if now.sidecar.health else "")
-        if before.has_mesh != now.has_mesh:
-            log.info("GET /v1/mesh %s", "answers: gossip, rev and counter are live" if now.has_mesh else "is not served")
+        if before.has_mesh != now.has_mesh and not now.refusing:
+            log.info("GET /v1/mesh %s", "answers: gossip, rev and counter are live" if now.has_mesh else
+                     "has not answered")
         if before.me.image_stale != now.me.image_stale:
             log.info("the grange's image is %s", "out of date (503)" if now.me.image_stale else "current again")
         if before.note != now.note and now.note:
@@ -331,6 +332,7 @@ class GrangeViz(App):
         else:
             self.query_one("#grid", Static).update(self.waiting())
         self.query_one("#diag", Static).update(stack.unreachable(snap, diag_width) if down else
+                                               stack.not_running(snap, diag_width) if snap.refusing else
                                                stack.diagnosis(self.columns, snap, diag_width))
         sel = next((c for c in self.columns if c.key == self.view.sel_key), None)
         self.query_one("#detail", Static).update(stack.detail(sel) if sel else Text(""))
@@ -354,6 +356,11 @@ class GrangeViz(App):
             else:
                 t.append(f"nothing answers on 127.0.0.1:{snap.port}", style=f"bold {INK}")
                 t.append(" · is the grange running?", style=INK2)
+        elif snap.refusing:                           # it answers, and only to say no
+            since = f" for {age(snap.me.stale_for)}" if snap.me.stale_for is not None else ""
+            t.append("✗ ", style=CRIT)
+            t.append(f"the grange on 127.0.0.1:{snap.port} is not running", style=f"bold {INK}")
+            t.append(f" · image out of date · make update · 503 to every request{since}", style=INK2)
         else:
             t.append(me.gid or "?", style=f"bold {INK}")
             bits = ([f" @ {me.address}"] if me.address else []) + \
@@ -365,7 +372,7 @@ class GrangeViz(App):
                 found = me.peers_discovered if me.peers_discovered is not None else len(self.shown.peers)
                 right.append(f"{found} found" + (f" · {me.peers_live} live" if me.peers_live is not None else ""), style=MUTED)
                 if not snap.has_mesh and not snap.demo:
-                    right.append(" · no /v1/mesh", style=MUTED)
+                    right.append(" · /v1/mesh: no answer", style=MUTED)
                 right.append("   ", style=MUTED)
         right.append(snap.clock, style=INK2)
         if snap.demo:

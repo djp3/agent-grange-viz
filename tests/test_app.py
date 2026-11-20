@@ -9,7 +9,7 @@ import pytest
 import main
 from demo import DemoSource
 from model import Snapshot
-from standins import Scripted, drive
+from standins import Scripted, drive, healthy, not_running, today
 
 
 def text_of(app, wid: str) -> str:
@@ -78,6 +78,41 @@ async def test_nothing_answering_freezes_the_last_picture_and_says_so():
         assert "nothing answers" in text_of(app, "#head")
         assert "make up" in text_of(app, "#diag")
         assert app.query_one("#grid").styles.text_opacity < 1
+
+
+@drive
+async def test_a_grange_that_refuses_everything_is_said_to_be_not_running():
+    """Its image is out of date: 503 on every route. The top line and the diagnosis say it is
+    not running, and the rows it would fill show nothing, not what it said before."""
+    source = Scripted(today([healthy("alice")]))
+    app = main.GrangeViz(source, live=False)
+    async with app.run_test(size=(150, 46)) as pilot:
+        await pilot.pause()
+        assert "━" in text_of(app, "#grid"), "alice's record, as a bar"
+        source.snap = not_running([healthy("alice")])              # a source that hands her record on anyway
+        app.tick()
+        await pilot.pause()
+        head, grid, diag = (text_of(app, wid) for wid in ("#head", "#grid", "#diag"))
+        assert "is not running" in head and "503" in head and "make update" in head and "2h13" in head
+        assert "djp3" not in head and "cursor" not in head
+        assert "━" not in grid and "not known" in grid and "stopped" in grid and "unknown" in grid
+        assert "not running" in diag and "make update" in diag and "3f4d4a6" in diag and "4fc66bd" in diag
+        assert "every column reads green" not in diag
+        assert "not running" in text_of(app, "#liveness") and "alice" not in text_of(app, "#liveness")
+        assert app.query_one("#grid").styles.text_opacity == 1, "the tailnet rows are live: nothing is dimmed"
+        source.snap = today([healthy("alice")])                    # make update
+        app.tick()
+        await pilot.pause()
+        assert "━" in text_of(app, "#grid") and "djp3" in text_of(app, "#head")
+
+
+@drive
+async def test_the_header_does_not_say_the_mesh_route_is_missing():
+    app = main.GrangeViz(Scripted(today([healthy("alice")])), live=False)
+    async with app.run_test(size=(170, 46)) as pilot:
+        await pilot.pause()
+        head = text_of(app, "#head")
+        assert "no /v1/mesh" not in head and "/v1/mesh: no answer" in head
 
 
 @drive
