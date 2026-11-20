@@ -28,7 +28,7 @@ detail, t order by role or by address, q quit. In the demo also: space pause, e 
 moment, + / - speed.
 
 The terminal's title (the Mac app's title bar) reads 🐓 agent-grange-viz and the version, then
-one 📡 for each teammate's grange that is bound, up to ten.
+one 📡 for each teammate's grange that is bound and still on the board, up to ten.
 """
 from __future__ import annotations
 
@@ -76,9 +76,11 @@ def window_title(bound: int) -> str:
 
 
 def bound_nodes(snap: Snapshot) -> int:
-    """How many teammates' granges are bound: an exchange has named who answers at their
-    address (R6.19). Only GET /v1/mesh says that. Until a grange serves it, a teammate whose
-    record is held stands in: their grange has reached this one. While nothing answers on
+    """How many teammates' granges this one reaches: those that are bound (an exchange has
+    named who answers at their address, R6.19) and whose record is still held. A binding is
+    never cleared, so by itself it outlives the grange it named; the record is what expires
+    when a teammate goes away. Only GET /v1/mesh says who is bound. Until a grange serves it,
+    a record held is all there is to go by, and is enough. While nothing answers on
     the local port, nothing is known to be bound; and while this grange's image is out of
     date it answers 503 to everything and has stopped gossiping (R5.16), so it reaches nobody
     whatever the last picture said.
@@ -89,7 +91,7 @@ def bound_nodes(snap: Snapshot) -> int:
     if not snap.reachable or snap.me.image_stale:
         return 0
     if snap.has_mesh:
-        return len({p.name for p in snap.peers if p.bound})
+        return len({p.name for p in snap.peers if p.bound and p.record is not None})
     return len({p.name for p in snap.peers if p.record is not None})
 
 

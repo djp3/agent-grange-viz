@@ -49,11 +49,21 @@ def held(name: str, **kw) -> Peer:
     return Peer(key=name, name=name, record=Record(seen_age=3.0, farm_age=8.0, farm_stale=False, agents=1), **kw)
 
 
-def test_with_the_mesh_a_grange_counts_once_it_is_bound():
+def test_with_the_mesh_a_grange_counts_while_it_is_bound_and_its_record_is_held():
     snap = Snapshot(has_mesh=True, peers=[held("alice", bound=True), held("carol", bound=False),
                                          Peer(key="judy", name="judy", bound=False),
-                                         Peer(key="frank", name="frank", bound=True, gone=Gone("expired", 30.0))])
-    assert main.bound_nodes(snap) == 2, "bound is what counts: alice, and frank whose record has gone"
+                                         Peer(key="frank", name="frank", bound=True, gone=Gone("expired", 30.0)),
+                                         Peer(key="mira", name="mira", bound=True, gone=Gone("left", 5.0))])
+    assert main.bound_nodes(snap) == 1, "alice alone: carol is not bound yet, and frank and mira have gone"
+
+
+def test_a_binding_alone_does_not_keep_a_dish_once_the_record_has_gone():
+    """A binding is never cleared, so it outlives the grange it named: a lid shut an hour ago
+    is still bound. With the mesh or without it, the same team reads the same."""
+    gone = [Peer(key="frank", name="frank", bound=True, gone=Gone("expired", 3600.0))]
+    assert main.bound_nodes(Snapshot(has_mesh=True, peers=[held("alice", bound=True)] + gone)) == 1
+    gone[0].bound = None
+    assert main.bound_nodes(Snapshot(has_mesh=False, peers=[held("alice")] + gone)) == 1
 
 
 def test_without_the_mesh_a_record_held_stands_in():
@@ -102,8 +112,11 @@ def test_nothing_is_bound_while_this_granges_image_is_out_of_date():
 
 def test_the_demo_counts_its_bound_granges():
     snap = DemoSource(start=165.0).snapshot()
-    bound = sum(1 for p in snap.peers if p.bound)
-    assert bound > 10 and main.bound_nodes(snap) == bound      # judy is the one that is not
+    bound = {p.name for p in snap.peers if p.bound}
+    held_too = {p.name for p in snap.peers if p.bound and p.record is not None}
+    assert bound - held_too == {"frank"}, "his lid is shut: bound still, his record expired"
+    assert "judy" not in bound                                  # refused every time: never bound
+    assert len(held_too) > 10 and main.bound_nodes(snap) == len(held_too)
     assert main.window_title(main.bound_nodes(snap)).count("📡") == 10
 
 
