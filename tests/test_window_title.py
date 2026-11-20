@@ -64,6 +64,25 @@ def test_without_the_mesh_a_record_held_stands_in():
     assert main.bound_nodes(snap) == 2
 
 
+def test_a_grange_on_two_devices_is_one_grange():
+    """A sidecar registered again leaves its old device listed beside the new one, both named
+    grange-alice, and the viewer gives each the record held for alice: two columns, one grange."""
+    old = held("alice")
+    old.key, old.address, old.hostname = "100.64.0.6:7789", "100.64.0.6:7789", "grange-alice"
+    new = held("alice")
+    new.key, new.address, new.hostname = "100.64.0.21:7789", "100.64.0.21:7789", "grange-alice"
+    snap = Snapshot(has_mesh=False, peers=[old, new, held("bob")])
+    assert main.bound_nodes(snap) == 2
+
+
+def test_a_grange_bound_at_two_addresses_is_one_grange():
+    """With the mesh a binding is per address, and two addresses can be bound to one id."""
+    snap = Snapshot(has_mesh=True, peers=[held("alice", bound=True), held("alice", bound=True),
+                                         held("bob", bound=True), held("carol", bound=False)])
+    snap.peers[0].key, snap.peers[1].key = "100.64.0.6:7789", "100.64.0.21:7789"
+    assert main.bound_nodes(snap) == 2
+
+
 def test_nothing_is_bound_while_nothing_answers():
     snap = Snapshot(has_mesh=True, reachable=False, unreachable_for=12.0, peers=[held("alice", bound=True)])
     assert main.bound_nodes(snap) == 0
