@@ -4,39 +4,12 @@
 freezes on the last picture when nothing answers."""
 from __future__ import annotations
 
-import asyncio
-import functools
-
 import pytest
 
 import main
 from demo import DemoSource
 from model import Snapshot
-
-
-def drive(test):
-    """Run an async test with plain pytest, the way agent-farm's and agent-frolic's UI tests do."""
-    @functools.wraps(test)
-    def run(*args, **kwargs):
-        return asyncio.run(test(*args, **kwargs))
-    return run
-
-
-class Scripted:
-    """A source that hands out whatever snapshot it was last given."""
-
-    def __init__(self, snap: Snapshot):
-        self.snap = snap
-        self.started = self.stopped = False
-
-    def start(self) -> None:
-        self.started = True
-
-    def stop(self) -> None:
-        self.stopped = True
-
-    def snapshot(self) -> Snapshot:
-        return self.snap
+from standins import Scripted, drive
 
 
 def text_of(app, wid: str) -> str:

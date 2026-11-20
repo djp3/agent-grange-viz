@@ -37,10 +37,12 @@ final class FirstClickTerminalView: LocalProcessTerminalView {
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, LocalProcessTerminalViewDelegate {
     /// The bundle's release number ("0.1.0"); the viewer gets it as AGENT_GRANGE_VIZ_VERSION.
     private let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-    /// Shown until the viewer sets a title of its own (via OSC 0) and whenever it clears it.
+    /// Shown until the viewer sets a title of its own (via OSC 0: the same words, then a radar
+    /// dish for each teammate's grange that is bound) and whenever it clears it. The same text
+    /// as main.WINDOW_TITLE, which tests/test_window_title.py checks against these lines.
     private var defaultTitle: String {
-        guard let v = version, !v.isEmpty else { return "📡 agent-grange-viz" }
-        return "📡 agent-grange-viz v\(v)"
+        guard let v = version, !v.isEmpty else { return "🐓 agent-grange-viz" }
+        return "🐓 agent-grange-viz v\(v)"
     }
     /// Draws the window's title in the middle of its bar, whenever it is set (CenteredTitle).
     private var centeredTitle: CenteredTitle?

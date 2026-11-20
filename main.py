@@ -26,6 +26,9 @@ agent-frolic's.
 Keys: ← → pick a column, shift+← → (or the wheel) scroll the columns, enter open / close the
 detail, t order by role or by address, q quit. In the demo also: space pause, e next scripted
 moment, + / - speed.
+
+The terminal's title (the Mac app's title bar) reads 🐓 agent-grange-viz and the version, then
+one 📡 for each teammate's grange that is bound, up to ten.
 """
 from __future__ import annotations
 
@@ -53,6 +56,35 @@ from theme import CRIT, DIVIDER, INK, INK2, MUTED, PLANE, RAISED, SURFACE, WAITI
 
 
 log = logging.getLogger("agent_grange_viz")
+# The terminal's title: the Mac app shows it in its title bar (and so in the Dock, Mission
+# Control and the window switcher), iTerm2 in its tab. After the rooster, the name and the
+# version, a radar dish for each teammate's grange that is bound: how many this one reaches.
+VERSION = app_version()
+WINDOW_TITLE = f"🐓 {APP_NAME} v{VERSION}" if VERSION else f"🐓 {APP_NAME}"
+DISH = "📡"
+MAX_DISHES = 10                          # a team past this many reads as this many
+
+
+def title_sequence(title: str) -> str:
+    """OSC 0 sets the terminal's window title; Textual never sets one itself. An empty
+    title hands the choice back to the terminal."""
+    return f"\x1b]0;{title}\x07"
+
+
+def window_title(bound: int) -> str:
+    return f"{WINDOW_TITLE} {DISH * min(bound, MAX_DISHES)}" if bound > 0 else WINDOW_TITLE
+
+
+def bound_nodes(snap: Snapshot) -> int:
+    """How many teammates' granges are bound: an exchange has named who answers at their
+    address (R6.19). Only GET /v1/mesh says that. Until a grange serves it, a teammate whose
+    record is held stands in: their grange has reached this one. While nothing answers on
+    the local port, nothing is known to be bound."""
+    if not snap.reachable:
+        return 0
+    if snap.has_mesh:
+        return sum(1 for p in snap.peers if p.bound)
+    return sum(1 for p in snap.peers if p.record is not None)
 
 
 class GridView(Static):
@@ -122,6 +154,8 @@ class GrangeViz(App):
         self.columns: list = []
         self.view = stack.View()
         self.show_detail = False
+        self.title_shown: Optional[str] = None       # the terminal title last written
+        self.leaving = False
 
     def compose(self) -> ComposeResult:
         yield Static(id="head")
@@ -150,6 +184,23 @@ class GrangeViz(App):
     def on_unmount(self) -> None:
         if self.live:
             self.source.stop()
+
+    def set_window_title(self, title: str) -> None:
+        """Write the terminal's title when it has changed (the redraw runs four times a second,
+        and an escape on every tick would be wasted). Once the app is quitting it is left cleared."""
+        driver = self._driver
+        if driver is None or self.leaving or title == self.title_shown:
+            return
+        try:
+            driver.write(title_sequence(title))
+            self.title_shown = title
+        except Exception:                 # headless, or already out of application mode
+            log.debug("window title not set", exc_info=True)
+
+    def exit(self, *args, **kwargs) -> None:
+        self.set_window_title("")         # the Mac app goes back to its own title, iTerm2's tab to its
+        self.leaving = True
+        super().exit(*args, **kwargs)
 
     def on_resize(self) -> None:
         self.redraw()
@@ -221,6 +272,7 @@ class GrangeViz(App):
     def redraw(self) -> None:
         width, height = self.size.width or 150, self.size.height or 46
         snap = self.snap
+        self.set_window_title(window_title(bound_nodes(snap)))
         down = not snap.reachable
         dim = 0.35 if down and (self.columns or snap.peers) else 1.0
         for wid in ("#liveness", "#tailnet", "#grid"):

@@ -11,6 +11,9 @@ loopback and no real Docker:
                (create, start with the framed stream, exit code) answering from a script
 
 Both record what was asked of them, so a test can say the viewer never wrote anything.
+
+And two things the tests of the window share: `drive`, which runs an async test, and
+`Scripted`, a source that hands out whatever snapshot it was last given.
 """
 from __future__ import annotations
 
@@ -319,3 +322,32 @@ class FakeDocker:
         self.server.shutdown()
         self.server.server_close()
         shutil.rmtree(self.dir, ignore_errors=True)
+
+
+# ---- for the tests of the window ---------------------------------------------------------------
+def drive(test):
+    """Run an async test with plain pytest, the way agent-farm's and agent-frolic's UI tests do."""
+    import asyncio
+    import functools
+
+    @functools.wraps(test)
+    def run(*args, **kwargs):
+        return asyncio.run(test(*args, **kwargs))
+    return run
+
+
+class Scripted:
+    """A source that hands out whatever snapshot it was last given."""
+
+    def __init__(self, snap):
+        self.snap = snap
+        self.started = self.stopped = False
+
+    def start(self) -> None:
+        self.started = True
+
+    def stop(self) -> None:
+        self.stopped = True
+
+    def snapshot(self):
+        return self.snap
