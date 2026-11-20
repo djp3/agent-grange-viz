@@ -12,7 +12,7 @@ import apppaths
 import main
 from demo import DemoSource
 from model import Gone, Me, Peer, Snapshot, Tailnet
-from standins import Scripted, drive, healthy, today
+from standins import Breaks, Scripted, drive, healthy, today
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -171,20 +171,6 @@ async def test_the_title_follows_the_count_and_is_cleared_on_quit(monkeypatch):
     assert writes[-1] == main.title_sequence("")                   # the Mac app's own title comes back
 
 
-class Breaks(Scripted):
-    """A source that fails once it has been read a few times: the viewer dies of it."""
-
-    def __init__(self, snap, after: int = 2):
-        super().__init__(snap)
-        self.left = after
-
-    def snapshot(self):
-        self.left -= 1
-        if self.left < 0:
-            raise RuntimeError("the source broke")
-        return self.snap
-
-
 @drive
 async def test_a_viewer_that_dies_leaves_its_title_behind_and_main_clears_it(monkeypatch):
     """Textual ends an app that raised without going through exit(), where the title is
@@ -194,10 +180,12 @@ async def test_a_viewer_that_dies_leaves_its_title_behind_and_main_clears_it(mon
     try:
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause()
-            app.tick()                                             # the third reading: it raises
+            app.tick()                                             # the second reading: it raises
             await pilot.pause()
-    except Exception:
-        pass
+    except RuntimeError as died:
+        assert "the source broke" in str(died)
+    else:
+        raise AssertionError("the source did not break: nothing was tested")
     assert writes[-1] == main.title_sequence(f"{main.WINDOW_TITLE} 📡📡📡"), "nothing cleared it"
     assert app.title_shown
 

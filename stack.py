@@ -153,8 +153,9 @@ def _judge(col: Column) -> None:
         word = (first[-1] if isinstance(first, tuple) else first).split()[0]   # the status code
         col.verdict = {"t/o": "timeout", "409": "refused", "403": "refused", "503": "outdated"}.get(word, word)
         col.vtone = "bad"
-    elif layer == "record":
-        col.verdict, col.vtone = c("record").lines[0], "bad"
+    elif layer == "record":                            # the cell says why in a word (expired, left, no body),
+        first = c("record").lines[0]                   # or is the bar of a record held and not heard from
+        col.verdict, col.vtone = (first if isinstance(first, str) else "silent"), "bad"
     elif layer == "farm":
         col.verdict, col.vtone = "no farm", "bad"
     elif c("record").tone == "warn":
@@ -282,7 +283,11 @@ def _diagnose(snap: Snapshot, col: Column, p: Peer) -> None:
         else:
             col.diag = ("bad", "gossip", f"answers {code} ({fails})", "")
     elif layer == "record":
-        if p.gone is not None:
+        if rec is not None:                            # held, and nothing has refreshed it for 45 s
+            col.diag = ("bad", "record", f"{hint} · {rec_state} · expires in "
+                                         f"{max(0.0, EXPIRE_S - rec.seen_age):.0f} s (R6.4)",
+                        "its grange has stopped, or no longer reaches yours")
+        elif p.gone is not None:
             col.diag = ("bad", "record", f"{hint} · {rec_state} (R6.4, R6.6)",
                         {"left": "make down; it is gone on purpose (R6.16)",
                          "expired": "no heartbeat reached you for 60 s"}.get(
@@ -627,7 +632,7 @@ def diagnosis(cols: list, snap: Snapshot, width: int) -> Text:
         tone, layer, evidence, advice = c.diag
         t = Text()
         t.append(f" {MARK[tone]} ", style=TONE[tone])
-        t.append(f"{c.label:<8}", style=f"bold {WAITING if tone == 'you' else INK}")
+        t.append(f"{c.label:<8} ", style=f"bold {WAITING if tone == 'you' else INK}")
         t.append(f"{layer:<8}", style=INK2)
         t.append(evidence, style=WAITING if tone == "you" else INK2)
         if advice:

@@ -4,12 +4,14 @@
 freezes on the last picture when nothing answers."""
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 import main
 from demo import DemoSource
 from model import Snapshot
-from standins import Scripted, drive, healthy, not_running, today
+from standins import Breaks, Scripted, drive, healthy, not_running, today
 
 
 def text_of(app, wid: str) -> str:
@@ -113,6 +115,41 @@ async def test_the_header_does_not_say_the_mesh_route_is_missing():
         await pilot.pause()
         head = text_of(app, "#head")
         assert "no /v1/mesh" not in head and "/v1/mesh: no answer" in head
+
+
+@drive
+async def test_a_teammate_going_quiet_does_not_end_the_viewer():
+    """What 0.1.1 died of: a record still held, and not refreshed for 45 s."""
+    alice = healthy("alice")
+    source = Scripted(today([alice]))
+    app = main.GrangeViz(source, live=False)
+    async with app.run_test(size=(150, 46)) as pilot:
+        await pilot.pause()
+        for seen in (30.0, 44.0, 45.0, 50.0, 59.9):
+            alice.record.seen_age = seen
+            app.tick()
+            await pilot.pause()
+        assert "silent" in text_of(app, "#grid") and app.return_code is None
+
+
+@drive
+async def test_a_crash_is_written_to_the_log(caplog):
+    """Textual prints the traceback on the terminal as the app ends, and nothing else: the Mac
+    app then points at a log that would hold only "exiting (return code 1)"."""
+    app = main.GrangeViz(Breaks(today()), live=False)
+    with caplog.at_level(logging.ERROR, logger="agent_grange_viz"):
+        try:
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                app.call_later(app.tick)                           # the second reading raises, inside the app
+                await pilot.pause(0.2)
+        except RuntimeError as died:                               # Textual hands it back as the test ends
+            assert "the source broke" in str(died)
+        else:
+            raise AssertionError("the source did not break: nothing was tested")
+    crashed = [r for r in caplog.records if "crashed" in r.getMessage()]
+    assert crashed and crashed[0].exc_info and "the source broke" in str(crashed[0].exc_info[1])
+    assert app.return_code == 1
 
 
 @drive

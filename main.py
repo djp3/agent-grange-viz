@@ -214,6 +214,12 @@ class GrangeViz(App):
         if self.live:
             self.source.stop()
 
+    def _handle_exception(self, error: Exception) -> None:
+        """Textual prints the traceback on the terminal as the app ends, and nowhere else: the
+        log the Mac app points at would say only that it exited. Put it there first."""
+        log.error("%s crashed", APP_NAME, exc_info=error)
+        super()._handle_exception(error)
+
     def set_window_title(self, title: str) -> None:
         """Write the terminal's title when it has changed (the redraw runs four times a second,
         and an escape on every tick would be wasted). Once the app is quitting it is left cleared."""

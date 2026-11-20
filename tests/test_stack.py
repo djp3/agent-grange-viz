@@ -89,6 +89,47 @@ def test_without_the_mesh_a_tagged_device_with_no_record_still_reads_as_a_break(
     assert "/v1/mesh" in c.diag[3]
 
 
+def test_a_record_held_and_not_heard_from_reads_silent():
+    """Past 45 s a record still held is the column's break, and its cell is a bar. The verdict
+    was read off the cell's first line, so it was the bar: the verdict row could not print it,
+    and the viewer died each time a teammate went quiet (0.1.1)."""
+    quiet = healthy("lightsail-test")
+    quiet.record.seen_age = 50.0
+    snap = today([quiet])
+    cols = stack.build(snap)
+    c = col(cols, "lightsail-test")
+    assert c.at("record").tone == "bad" and c.at("record").lines[0][0] == "bar"
+    assert stack.LAYERS[c.brk] == "record" and c.verdict == "silent" and c.vtone == "bad"
+    assert "record seen 50s ago" in c.diag[2] and "expires in 10 s" in c.diag[2] and "R6.4" in c.diag[2]
+    assert "/v1/mesh" not in c.diag[3], "that advice is for a column with no record at all"
+    assert "silent" in stack.grid(cols, 150, 2, 0, stack.View()).plain
+    assert "silent" in stack.tip_for(snap, cols, f"verdict:{c.key}").plain
+    said = stack.diagnosis(cols, snap, 148).plain.splitlines()[1]
+    assert "lightsail-test record" in said, "a long name does not run into the layer's"
+    assert "record seen 50s ago" in said and "no longer reaches yours" in said, "and it fits the usual window"
+
+
+def test_every_verdict_is_a_word_and_every_state_draws():
+    """A cell's first line can be a bar or a set of variants. Whatever the ages, each column's
+    verdict is a word, and the grid, the diagnosis, the detail and every tip can be drawn."""
+    for mesh in (False, True):
+        for seen in range(0, 61, 3):
+            for farm in (None, 5.0, 50.0, 70.0):
+                p = healthy("alice", **({"bound": True, "gossip": Gossip(role="pool", last_ok_age=1.0)} if mesh else {}))
+                p.record.seen_age, p.record.farm_age, p.record.farm_stale = float(seen), farm, farm == 70.0
+                snap = today([p], has_mesh=mesh)
+                cols = stack.build(snap)
+                where = (mesh, seen, farm)
+                assert all(isinstance(c.verdict, str) and c.verdict for c in cols), where
+                for width in (60, 100, 150):
+                    stack.grid(cols, width, 3, 1, stack.View())
+                stack.diagnosis(cols, snap, 200)
+                for c in cols:
+                    stack.detail(c)
+                    for kind in ("head", "tailnet", "gossip", "record", "farm", "verdict"):
+                        assert stack.tip_for(snap, cols, f"{kind}:{c.key}") is not None, where
+
+
 def test_a_record_that_went_says_how():
     gone = Peer(key="frank", name="frank", hostname="grange-frank",
                 tailnet=Tailnet(online=True, path="direct", rtt_ms=5.0, handshake_age=200.0),
