@@ -42,6 +42,15 @@ says the tunnels already up still work. When nothing answers on the grange's por
 last picture freezes, dimmed, and the top line says for how long, what Docker knows about the
 two containers, and that only `make up` brings them back.
 
+When your grange's image is out of date it answers 503 to every request and gossips with
+nobody: it is up, and it is not running. The app says so on the top line, in the liveness
+panel, in your column (**stopped**) and in the diagnosis, with the fix: `make update`. It
+shows nothing the grange said before. The gossip, record and farm rows read *not known* in
+every column, because nothing keeps those values up, and a record whose age stands still
+looks like one that is live. The headscale and tailnet rows carry on, since they come from
+your sidecar, which is running; a teammate headscale calls offline still reads offline, and
+the rest get the verdict *unknown*.
+
 ### Every cell explains itself
 
 Hover any cell: the exact numbers, what its mark means, and where the data comes from. Hover a
@@ -95,9 +104,9 @@ From top to bottom:
   through the DERP relay, by count and by bytes, the home relay, round trips on a log scale
   with the slowest named, recent path changes, and tailscaled's own health.
 - **The grid**, under a double rule: a column for each grange, yours first and pinned. Where
-  the grange says each one's place in the gossip ring (the demo does; a real grange will with
-  `GET /v1/mesh`), the others follow in that order: the ring successor, the neighbours, the
-  repair pool, and the addresses outside the live set. The rows are below.
+  the grange says each one's place in the gossip ring (`GET /v1/mesh`; the demo has it), the
+  others follow in that order: the ring successor, the neighbours, the repair pool, and the
+  addresses outside the live set. The rows are below.
 - **The verdict**: one word under each column.
 - **The diagnosis**: every column that breaks or degrades, in plain words. Something only
   you can fix is yellow. Sources that are no teammate at all (a device without the grange's
@@ -107,9 +116,9 @@ The title bar reads 🐓 agent-grange-viz and the version (v0.1.1, say), then on
 teammate's grange that is bound and whose record yours still holds, up to ten, so the Dock,
 Mission Control and the window switcher show how many granges yours reaches. A grange is
 bound once an exchange has named who answers at its address. Only `GET /v1/mesh` says that,
-so until the grange serves it a record held is enough. A teammate whose record has expired or
-left has no dish, a teammate on two devices has one, and there are none while nothing answers
-on the grange's port or its image is out of date.
+so where the grange has not answered it a record held is enough. A teammate whose record has
+expired or left has no dish, a teammate on two devices has one, and there are none while
+nothing answers on the grange's port or its image is out of date.
 
 ### The rows
 
@@ -143,23 +152,25 @@ The View menu changes the text size (⌘+ / ⌘-), picks any fixed-pitch font in
 Mac, and toggles font smoothing; the window remembers all of that with its size and place.
 **Viewer ▸ Restart Viewer** (⌘R) starts it again.
 
-## What it can show today, and what waits for the grange
+## Where each row comes from
 
-The grange serves three things on its local port today: `GET /health`, `GET /v1/agents` and
-`GET /version`. With those, and the sidecar asked through Docker, the app shows live:
+The app reads four routes on the grange's local port: `GET /health`, `GET /v1/agents`,
+`GET /version` and `GET /v1/mesh`. From the first three, and the sidecar asked through
+Docker, it shows:
 
 - the **headscale** row and the **tailnet** row (the sidecar's `tailscale status` and `ping`);
 - the **record** row's bar (how long since each record was refreshed);
 - the **farm** row (farm age, the stale flag, the agent count);
-- your own column, the liveness and tailnet panels, and the unreachable screen.
+- your own column, the liveness and tailnet panels, and the screens for a grange that cannot
+  be reached or is not running.
 
-The rest is not in today's API: each peer's **gossip** cell (last exchange, failure code,
+The rest comes from `GET /v1/mesh`: each peer's **gossip** cell (last exchange, failure code,
 counts, its place in the ring), rev and counter, which address is bound to which id, and
-whether a record that went away expired or left. Those cells say that they need
-`GET /v1/mesh`, which the grange does not serve yet. [docs/openapi.yaml](docs/openapi.yaml)
-is the specification of it, written for agent-grange to implement, and
-[docs/data-sources.md](docs/data-sources.md) is the survey behind it. The app is written to
-fill those cells in the moment the route answers.
+whether a record that went away expired or left. The app asks for it when it starts and once
+a minute after that. While a grange has not answered it those cells read *not known*, and
+their tips say that this is why; they fill in the moment it answers.
+[docs/openapi.yaml](docs/openapi.yaml) is the specification of the route, and
+[docs/data-sources.md](docs/data-sources.md) is the survey behind it.
 
 **The demo** fills every row now. `--demo` (or **Viewer ▸ Show the Demo**) runs a made-up
 team of thirteen granges through a four-minute loop: a lid closes, a path falls back to DERP,
@@ -176,8 +187,8 @@ invented, and the screen says so.
 - **The Docker socket**, if you allow it (you do by default): it lists the two agent-grange
   containers and their state, and runs `tailscale status` and `tailscale ping` inside the
   sidecar. It starts, stops and changes nothing. Turn it off with `"use_docker": false` in
-  the settings or `--no-docker`; the headscale and tailnet rows then have nothing to show
-  until the grange serves `GET /v1/mesh`.
+  the settings or `--no-docker`; the headscale and tailnet rows then show only what the
+  grange itself relays of its sidecar in `GET /v1/mesh`.
 - **Nothing else.** It reaches no other machine, sends none of this anywhere, and keeps no
   history on disk: what the panels count is held in memory while the app is open.
 

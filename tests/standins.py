@@ -12,9 +12,9 @@ loopback and no real Docker:
 
 Both record what was asked of them, so a test can say the viewer never wrote anything.
 
-And what the tests of the view and the window share: `healthy` and `today`, which make a
-teammate and a picture to draw; `drive`, which runs an async test; and `Scripted`, a source
-that hands out whatever snapshot it was last given.
+And what the tests of the view and the window share: `healthy`, `today` and `not_running`,
+which make a teammate and a picture to draw; `drive`, which runs an async test; and
+`Scripted`, a source that hands out whatever snapshot it was last given.
 """
 from __future__ import annotations
 
@@ -347,6 +347,17 @@ def today(peers=(), **kw):
     kw.setdefault("has_mesh", False)
     kw.setdefault("has_sidecar", True)
     return Snapshot(me=me, sidecar=Sidecar(state="ok", home_derp="headscale"), peers=list(peers), **kw)
+
+
+def not_running(peers=(), **kw):
+    """A Snapshot of a grange whose image is out of date: it has answered 503 to every route
+    for a little over two hours. `peers` are handed on as given, so a test can check what the
+    view does with a record that a source should not have sent."""
+    from model import Me
+    snap = today(peers, **kw)
+    snap.me = Me(gid="djp3", address="100.64.0.5:7789", image_stale=True, stale_for=7980.0, built="3f4d4a6",
+                 tag_commit="4fc66bd", fresh_summary="image is 1 commit(s) behind tag 'agent-grange-latest'")
+    return snap
 
 
 def drive(test):

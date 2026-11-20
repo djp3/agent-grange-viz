@@ -100,6 +100,12 @@ def _label(p) -> str:
 
 # ---- liveness --------------------------------------------------------------------------------------
 def liveness(snap: Snapshot, w: int, h: int) -> list:
+    if snap.refusing:                                 # no record is drawn: nothing keeps any of them up
+        return [_title("liveness", "R6.4 · seen age, expiry at 60 s", T(mark("crit"), ("not known", INK)), w),
+                T(("  your grange is not running: it answers 503 to every request", INK2)),
+                T(("  its records are not shown: it gossips with nobody, so nothing", MUTED)),
+                T(("  keeps them up and every age would stand still", MUTED)),
+                T(("  cd docker && make update, in agent-grange", MUTED))]
     seen = {_label(p): p.record.seen_age for p in snap.peers if p.record is not None}
     worst = max(seen.values(), default=0)
     ok = "good" if worst < 20 else ("warn" if worst < 45 else "serious")

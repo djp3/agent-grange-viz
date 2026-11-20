@@ -22,13 +22,15 @@ is missing" (agent-frolic shows that) but "why, and whose move is it".
 
 This module is the logic and the drawing, as functions of a model.Snapshot; main.py is the
 window around it. Whatever a Snapshot does not know (None) is drawn as not known, greyed, and
-never counts as a break: with today's grange that is each peer's gossip cell, and rev and
-counter, until it serves GET /v1/mesh (docs/openapi.yaml).
+never counts as a break: each peer's gossip cell, rev and counter where the grange has not
+answered GET /v1/mesh (docs/openapi.yaml), and every row the grange fills while its image is
+out of date. It then answers 503 to every request and gossips with nobody (R5.16), so nothing
+it said before is drawn: nothing keeps it up, and an age that stands still reads as live.
 """
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Optional
 
 from rich.style import Style
@@ -58,11 +60,15 @@ PANEL_H = 11                                   # the liveness and tailnet band, 
 PANEL_MIN = 7
 DIAG_MIN = 7                                   # the diagnosis keeps its rule, title and five rows
 SHORT = {"refused": "refuse", "timeout": "t/o", "offline": "off", "expired": "gone", "no farm": "farm",
-         "outdated": "503", "no body": "body?", "no sock": "sock?", "log out": "logout"}
+         "outdated": "503", "no body": "body?", "no sock": "sock?", "log out": "logout", "stopped": "stop",
+         "unknown": "?"}
 SIDECAR_WORD = {"ok": ("ok",), "no-control": ("no control", "no ctrl", "ctrl?"),
                 "no-socket": ("no socket", "no sock", "sock?"), "logged-out": ("logged out", "log out", "logout"),
                 "unknown": ("unknown", "?")}
-MESH = "GET /v1/mesh"                           # what today's grange does not serve yet
+MESH = "GET /v1/mesh"                           # gossip per address, bindings, rev and counter come from it
+NO_MESH = f"not known: {MESH} has not answered"
+GRANGE_DOWN = "not known: your grange is not running"
+UNKNOWN = ("fit", "not known", "unknown", "?")  # what a cell reads when nothing can vouch for it
 
 
 @dataclass
@@ -117,6 +123,10 @@ def via(snap: Snapshot) -> str:
     return "relayed by the grange" if snap.has_mesh else "asked of the sidecar through Docker"
 
 
+def _unknown() -> Cell:
+    return Cell("none", [UNKNOWN, ""], glyph="·", ghost=True)
+
+
 # ---- from a Snapshot to columns ----------------------------------------------------------------
 def build(snap: Snapshot, by_address: bool = False) -> list:
     """Your column first, then the peers: successor, neighbours, repair pool, outside, by
@@ -156,6 +166,9 @@ def _judge(col: Column) -> None:
 
 
 def _peer(snap: Snapshot, p: Peer) -> Column:
+    stopped = snap.refusing
+    if stopped:                                        # what the grange said before is last known at best
+        p = replace(p, bound=None, gossip=None, record=None, gone=None, back_kind="", back_age=None)
     col = Column(p.key, p.name, p.bound, p.gossip.role if p.gossip else "", p.address, peer=p)
     tn, g, rec = p.tailnet, p.gossip, p.record
     col.online = tn.online if tn else None
@@ -176,7 +189,7 @@ def _peer(snap: Snapshot, p: Peer) -> Column:
 
     # gossip
     if g is None:
-        col.cells.append(Cell("none", [("fit", "needs mesh", "no mesh", "mesh?"), ""], glyph="·", ghost=True))
+        col.cells.append(_unknown())
     else:
         updown = f"↑{sum(g.sent.values())} ↓{sum(g.recv.values())}"
         code = "t/o" if g.last_status is None else str(g.last_status)
@@ -189,7 +202,9 @@ def _peer(snap: Snapshot, p: Peer) -> Column:
             col.cells.append(Cell("none", ["untried", updown]))
 
     # record
-    if rec is not None:
+    if stopped:
+        col.cells.append(_unknown())
+    elif rec is not None:
         tone = "ok" if rec.seen_age < 20 else "warn" if rec.seen_age < 45 else "bad"
         if p.back_age is not None and p.back_age < 60:
             second = f"↻ {age(p.back_age)}"
@@ -209,9 +224,11 @@ def _peer(snap: Snapshot, p: Peer) -> Column:
         tone = "bad" if rec.farm_stale else ("warn" if fa is not None and fa > 45 else "ok")
         col.cells.append(Cell(tone, [("bar", (fa or 0) / FARM_STALE_S, tone), agents(rec.agents)]))
     else:
-        col.cells.append(Cell("none", ["—", ""]))
+        col.cells.append(_unknown() if stopped else Cell("none", ["—", ""]))
 
     _judge(col)
+    if stopped and col.brk is None:                    # only the tailnet row is there to judge by
+        col.verdict, col.vtone = "unknown", "none"
     _diagnose(snap, col, p)
     col.detail = _detail_peer(snap, p)
     return col
@@ -233,6 +250,8 @@ def _hint(p: Peer) -> str:
 def _diagnose(snap: Snapshot, col: Column, p: Peer) -> None:
     g, rec = p.gossip, p.record
     rec_state, hint = _rec_state(p), _hint(p)
+    if snap.refusing:
+        rec_state = "what your grange held for it is not known"
     layer = LAYERS[col.brk] if col.brk is not None else None
     if layer == "tailnet":
         col.diag = ("bad", "tailnet", f"headscale says offline · no path · {rec_state}",
@@ -267,11 +286,12 @@ def _diagnose(snap: Snapshot, col: Column, p: Peer) -> None:
             col.diag = ("bad", "record", f"{hint} · {rec_state} (R6.4, R6.6)",
                         {"left": "make down; it is gone on purpose (R6.16)",
                          "expired": "no heartbeat reached you for 60 s"}.get(
-                            p.gone.kind, f"expired or left: {MESH} would say which"))
+                            p.gone.kind, f"expired or left: {MESH} says which, and has not answered"))
         else:
             col.diag = ("bad", "record", f"{hint} · {rec_state}",
                         "a body should follow within a repair (R5.10)" if snap.has_mesh else
-                        f"its grange is not reaching yours, or runs another group; {MESH} would say which")
+                        f"its grange is not reaching yours, or runs another group; {MESH} says which, and has "
+                        f"not answered")
     elif layer == "farm" and rec is not None:
         col.diag = ("bad", "farm", f"farm silent {age(rec.farm_age)} · farm_stale (R6.3)",
                     "grange alive, its farm is not; agents stay on boards, flagged")
@@ -287,8 +307,9 @@ def _diagnose(snap: Snapshot, col: Column, p: Peer) -> None:
 
 def _detail_peer(snap: Snapshot, p: Peer) -> list:
     tn, g, rec = p.tailnet, p.gossip, p.record
+    why = GRANGE_DOWN if snap.refusing else NO_MESH
     rows = [("address", " · ".join(x for x in (p.address, p.hostname) if x) or "not known"),
-            ("binding", {True: p.name, False: "none (no good exchange yet)", None: f"needs {MESH}"}[p.bound]
+            ("binding", {True: p.name, False: "none (no good exchange yet)", None: why}[p.bound]
              + (f" · {g.role}" if g else ""))]
     if tn is None:
         rows.append(("tailnet", "no sidecar data"))
@@ -299,7 +320,7 @@ def _detail_peer(snap: Snapshot, p: Peer) -> list:
                                                  ms(tn.rtt_ms)) if x)),
                  ("wireguard", f"handshake {age(tn.handshake_age)} ago · tx {size(tn.tx)} rx {size(tn.rx)}")]
     if g is None:
-        rows.append(("gossip", f"needs {MESH}"))
+        rows.append(("gossip", why))
     else:
         fail = ("never" if g.last_fail_age is None else
                 f"{age(g.last_fail_age)} ago ({'timeout' if g.last_status is None else g.last_status})")
@@ -316,6 +337,8 @@ def _detail_peer(snap: Snapshot, p: Peer) -> list:
     elif p.gone is not None:
         more = f", remembered for {age(p.gone.forget_left)} more" if p.gone.forget_left is not None else ""
         rows.append(("record", f"{p.gone.kind} {age(p.gone.age)} ago{more}"))
+    elif snap.refusing:
+        rows.append(("record", GRANGE_DOWN))
     return rows
 
 
@@ -334,6 +357,7 @@ def sidecar_cell(snap: Snapshot) -> Cell:
 
 def _me(snap: Snapshot) -> Column:
     me, sc = snap.me, snap.sidecar
+    stopped = snap.refusing
     col = Column("me", "you", True, "you", me.address)
     alone = me.peers_discovered == 0 and not snap.peers
     quiet = not alone and (me.last_gossip_age is None or me.last_gossip_age > 30)
@@ -351,18 +375,17 @@ def _me(snap: Snapshot) -> Column:
         stale = me.farm_stale or fa > FARM_STALE_S
         farm = Cell("you" if stale else ("warn" if fa > 30 else "ok"),
                     [("bar", fa / FARM_STALE_S, "ok" if fa <= 30 else "warn"), agents(me.agents)])
-    col.cells = [
-        sidecar_cell(snap),
-        Cell("you" if (me.image_stale or quiet) else ("none" if alone and me.last_gossip_age is None else "ok"),
-             ["503 out" if me.image_stale else last, f"rej {sum(me.rejected.values())}"]),
-        record,
-        farm,
-    ]
+    gossip = Cell("you" if quiet else ("none" if alone and me.last_gossip_age is None else "ok"),
+                  [last, f"rej {sum(me.rejected.values())}"])
+    if stopped:                                        # it says nothing now, and what it said is not kept up
+        gossip, record, farm = Cell("you", ["stopped", "503"]), _unknown(), _unknown()
+    col.cells = [sidecar_cell(snap), gossip, record, farm]
     _judge(col)
     since = age(sc.since) if sc.since is not None else "a while"
     if col.brk is not None:
         layer = LAYERS[col.brk]
-        col.verdict = {"tailnet": SIDECAR_WORD.get(sc.state, ("tailnet",))[-1], "gossip": "fix me",
+        col.verdict = {"tailnet": SIDECAR_WORD.get(sc.state, ("tailnet",))[-1],
+                       "gossip": "stopped" if stopped else "fix me",
                        "record": "dup id", "farm": "no farm"}.get(layer, "fix me")
         socket_lost = (f"the grange can't reach its sidecar's LocalAPI for {since}: discovery is frozen on its last "
                        f"list and every incoming exchange fails the whois check "
@@ -370,7 +393,9 @@ def _me(snap: Snapshot) -> Column:
         col.diag = ("you", layer,
                     {"tailnet": socket_lost if sc.state == "no-socket" else
                                 f"tailscaled is logged out for {since}: no tailnet at all",
-                     "gossip": "your image is out of date: every route answers 503 (R5.16)" if me.image_stale else
+                     "gossip": (f"your grange is not running: its image is out of date (built from "
+                                f"{me.built or '?'}, the tag is at {me.tag_commit or '?'}), so it answers 503 to "
+                                f"every request and gossips with nobody (R5.16)") if stopped else
                                "your grange has not gossiped in a while",
                      "record": "another grange runs with your GRANGE_ID (R4.8)",
                      "farm": "your farm has not pushed in a minute (R6.3)" if fa is not None else
@@ -378,7 +403,7 @@ def _me(snap: Snapshot) -> Column:
                     {"tailnet": "docker compose logs tailscale; make up if it stays wedged"
                                 if sc.state == "no-socket" else
                                 "was the node removed on headscale (R9.5)? ask the admin, then make up",
-                     "gossip": "make update" if me.image_stale else "docker compose logs grange",
+                     "gossip": "make update" if stopped else "docker compose logs grange",
                      "record": "pick another GRANGE_ID", "farm": "is agent-farm running?"}[layer])
     elif sc.state == "no-control":
         col.verdict, col.vtone = "ctrl?", "warn"
@@ -387,14 +412,24 @@ def _me(snap: Snapshot) -> Column:
                     "nothing to do unless it lasts; nobody new can join meanwhile")
     else:
         col.verdict = "you"
-    col.detail = [("address", me.address or "not known"), ("group", me.group or f"needs {MESH}"),
+    if stopped:
+        col.detail = [("address", me.address or "not known"),
+                      ("grange", "not running: 503 to every request"
+                                 + (f" for {age(me.stale_for)}" if me.stale_for is not None else "")),
+                      ("image", f"built from {me.built or '?'} · the tag is at {me.tag_commit or '?'}"),
+                      ("why", me.fresh_summary or "the image is out of date"),
+                      ("fix", "cd docker && make update, in agent-grange"),
+                      ("home DERP", f"{sc.home_derp or '?'} · {ms(sc.derp_ms)}"),
+                      ("health", ", ".join(sc.health) or "no warnings")]
+        return col
+    col.detail = [("address", me.address or "not known"), ("group", me.group or NO_MESH),
                   ("incarnation", str(me.incarnation)),
-                  ("rev · counter", f"{me.rev} · {me.counter}" if me.rev is not None else f"needs {MESH}"),
+                  ("rev · counter", f"{me.rev} · {me.counter}" if me.rev is not None else NO_MESH),
                   ("cursor", str(me.cursor)),
                   ("farm", (f"pushed {age(fa)} ago" if fa is not None else "never pushed")
                            + (f" · {me.farm_pushes} pushes" if me.farm_pushes is not None else "")),
-                  ("frolic", f"{me.longpolls} long-poll(s) held" if me.longpolls is not None else f"needs {MESH}"),
-                  ("sent", counts(me.sent) if me.sent is not None else f"needs {MESH}"),
+                  ("frolic", f"{me.longpolls} long-poll(s) held" if me.longpolls is not None else NO_MESH),
+                  ("sent", counts(me.sent) if me.sent is not None else NO_MESH),
                   ("rejected", counts(me.rejected)),
                   ("duplicate id", "yes" if me.duplicate_id else "no"),
                   ("image", f"{me.built or '?'} · tag {me.tag_commit or '?'} · {me.fresh_unchanged} polls unchanged"),
@@ -570,9 +605,10 @@ def grid(cols: list, width: int, nlines: int, gap: int, view: View) -> Text:
     gutter("verdict", f"bold {INK2}", tip="layer:verdict")
     for c in shown:
         word = Text()
-        word.append(f" {MARK[c.vtone] if c.vtone != 'ok' else '●'} ", style=TONE[c.vtone] + bg(c))
+        word.append(f" {'●' if c.vtone == 'ok' else '·' if c.vtone == 'none' else MARK[c.vtone]} ",
+                    style=TONE[c.vtone] + bg(c))
         word.append(f"{fit(cw - 3, c.verdict, SHORT.get(c.verdict, c.verdict)):<{cw - 3}}",
-                    style=(f"bold {INK}" if c.vtone != "ok" else INK2) + bg(c))
+                    style=(INK2 if c.vtone == "ok" else MUTED if c.vtone == "none" else f"bold {INK}") + bg(c))
         word.stylize(_tip(f"verdict:{c.key}"))
         out.append_text(word)
     return out
@@ -612,8 +648,8 @@ def diagnosis(cols: list, snap: Snapshot, width: int) -> Text:
         lines.append(t)
     if not snap.has_mesh and not snap.demo:
         t = Text(" · ", style=MUTED)
-        t.append(f"the gossip row, rev and counter need {MESH}, which this grange does not serve yet "
-                 f"(docs/openapi.yaml); --demo shows them on made-up data", style=MUTED)
+        t.append(f"the gossip row, rev and counter come from {MESH}, which this grange has not answered: "
+                 f"they read as not known until it does; --demo shows them on made-up data", style=MUTED)
         lines.append(t)
     if snap.note:
         t = Text(" · ", style=MUTED)
@@ -634,7 +670,7 @@ def unreachable(snap: Snapshot, width: int) -> Text:
     if d.available and d.sidecar:
         side = f"{d.sidecar} {d.sidecar_state or 'state unknown'}" + (
             f" {age(d.sidecar_for)} ago" if d.sidecar_for is not None and d.sidecar_state != "running" else "")
-        grange = (f" · {d.grange} {d.grange_state}" + (f", {d.grange_health}" if d.grange_health else "")) if d.grange else ""
+        grange = f" · {_grange_says(d)}" if d.grange else ""
         tail = " · with no network: it lives in the sidecar's" if d.sidecar_state != "running" and d.grange_state == "running" else ""
         rows.append(("", MUTED, "docker", side + grange + tail, INK2))
     elif d.available:
@@ -644,16 +680,48 @@ def unreachable(snap: Snapshot, width: int) -> Text:
     rows.append(("", MUTED, "so", "farm and frolic can't reach it either, and your teammates' boards drop you "
                                   "within 60 s (R6.4)", INK2))
     rows.append(("▲", WAITING, "fix", "nothing restarts by itself (R8.9): cd docker && make up", WAITING))
-    out = Text()
-    out.append("diagnosis", style=f"bold {INK2}")
-    out.append("  the grange can't be reached", style=MUTED)
+    return _facts("the grange can't be reached", rows, width)
+
+
+def not_running(snap: Snapshot, width: int) -> Text:
+    """The diagnosis while the grange refuses every request because its image is out of date:
+    what it answers, what follows, what is not shown and why, and the fix. Five rows at most,
+    so the fix is in view in the smallest window."""
+    me, d = snap.me, snap.docker
+    since = f" for {age(me.stale_for)}" if me.stale_for is not None else ""
+    rows = [("✗", CRIT, f"127.0.0.1:{snap.port}",
+             f"answers 503 to every request{since} · built {me.built or '?'}, tag at {me.tag_commit or '?'} · "
+             f"{me.fresh_summary or 'image out of date'}", INK2)]
+    if d.available and d.grange:
+        rows.append(("", MUTED, "docker", _grange_says(d) + (f" · {d.sidecar} {d.sidecar_state}" if d.sidecar else ""),
+                     INK2))
+    rows.append(("", MUTED, "so", "it gossips with nobody (R5.16): farm and frolic get 503 too, and your "
+                                  "teammates' boards drop you within 60 s (R6.4)", INK2))
+    rows.append(("", MUTED, "not shown", "what it held before (gossip, records, farms): nothing keeps it up"
+                 + (" · the headscale and tailnet rows are live, from your sidecar" if snap.has_sidecar else ""), INK2))
+    rows.append(("▲", WAITING, "fix", "cd docker && make update, in agent-grange", WAITING))
+    return _facts("your grange is not running: its image is out of date", rows, width)
+
+
+def _grange_says(d) -> str:
+    """The grange's container as Docker tells it: its state, and its health when it has one."""
+    return f"{d.grange} {d.grange_state}" + (f", {d.grange_health}" if d.grange_health else "")
+
+
+def _facts(subtitle: str, rows: list, width: int) -> Text:
+    """A diagnosis that is about the grange itself: (mark, its style, key, text, its style) rows."""
+    head = Text()
+    head.append("diagnosis", style=f"bold {INK2}")
+    head.append("  " + subtitle, style=MUTED)
+    lines = [head]
     for mark, mstyle, key, text, tstyle in rows:
-        line = Text(f"\n {mark or ' '} ", style=mstyle)
+        line = Text(f" {mark or ' '} ", style=mstyle)
         line.append(f"{key:<16}", style=f"bold {INK}" if mark else MUTED)
         line.append(text, style=tstyle)
-        line.truncate(width + 1, overflow="ellipsis")
-        out.append_text(line)
-    return out
+        lines.append(line)
+    for line in lines:                                # a row is cut, never wrapped: the fix stays in view
+        line.truncate(width, overflow="ellipsis")
+    return Text("\n").join(lines)
 
 
 def detail(c: Column) -> Text:
@@ -676,25 +744,29 @@ LEGEND = {   # what the marks in each row mean, for the end of every tip in that
     "gossip": (("● ", GOOD), ("last exchange good  ", INK2), ("✗ ", CRIT), ("failing  ", INK2), ("○ ", MUTED),
                ("never tried  ", INK2), ("· ", MUTED), ("not known", INK2)),
     "record": (("● ", GOOD), ("seen < 20 s  ", INK2), ("◐ ", WARN), ("20–45 s  ", INK2), ("✗ ", CRIT),
-               ("> 45 s, gone, or none  ", INK2), ("○ ", MUTED), ("not tied to an id yet", INK2)),
+               ("> 45 s, gone, or none  ", INK2), ("○ ", MUTED), ("not tied to an id yet  ", INK2), ("· ", MUTED),
+               ("not known", INK2)),
     "farm": (("● ", GOOD), ("pushed < 45 s ago  ", INK2), ("◐ ", WARN), ("45–60 s  ", INK2), ("✗ ", CRIT),
-             ("farm_stale  ", INK2), ("○ ", MUTED), ("no record", INK2)),
+             ("farm_stale  ", INK2), ("○ ", MUTED), ("no record  ", INK2), ("· ", MUTED), ("not known", INK2)),
     "verdict": (("● ", GOOD), ("ok  ", INK2), ("◐ ", WARN), ("degraded  ", INK2), ("✗ ", CRIT), ("breaks  ", INK2),
-                ("yellow: ", MUTED), ("yours to fix", WAITING)),
+                ("· ", MUTED), ("not known  ", INK2), ("yellow: ", MUTED), ("yours to fix", WAITING)),
 }
 SOURCE_TIP = {   # where a cell's data comes from, when its tip does not already say
     ("head", "me"): "Source: your grange's GET /health and /version; the top line shows the same.",
     ("gossip", "peer"): f"Source: the grange's gossip core, per address: last exchange, status, sent and received "
                         f"counts, its place in the live set ({MESH}).",
-    ("gossip", "me"): f"Source: GET /health (last_gossip_age_s, rejected); sent counts need {MESH}.",
+    ("gossip", "me"): f"Source: GET /health (last_gossip_age_s, rejected); sent counts from {MESH}.",
     ("record", "peer"): f"Source: the grange's Store: seen_age_s from GET /v1/agents; rev, counter and incarnation "
-                        f"need {MESH}.",
-    ("record", "me"): f"Source: GET /health (incarnation, duplicate_id); rev and counter need {MESH}.",
+                        f"from {MESH}.",
+    ("record", "me"): f"Source: GET /health (incarnation, duplicate_id); rev and counter from {MESH}.",
     ("farm", "peer"): "Source: GET /v1/agents: farm_age_s, farm_stale and the agents list, as their grange relays them.",
     ("farm", "me"): "Source: your own entry in GET /v1/agents (farm_age_s, agents), from your farm's pushes.",
 }
-NOT_YET = (f"Not known: today's grange does not say. It needs {MESH}, which is specified in "
-           f"docs/openapi.yaml and not served yet. Run with --demo to see this row on made-up data.")
+NO_MESH_TIP = (f"Not known: this comes from {MESH}, which this grange has not answered. The viewer asks again "
+               f"every minute and fills it in when it does. Run with --demo to see this row on made-up data.")
+STOPPED_TIP = ("Not known: your grange is not running. Its image is out of date, so it answers 503 to every "
+               "request and gossips with nobody (R5.16). What it held before is not shown, because nothing keeps "
+               "it up. cd docker && make update, in agent-grange, starts it again.")
 
 
 def tip_for(snap: Snapshot, cols: list, key: str) -> Optional[Text]:
@@ -704,6 +776,7 @@ def tip_for(snap: Snapshot, cols: list, key: str) -> Optional[Text]:
     col = next((c for c in cols if c.key == which), None)
     p = col.peer if col is not None else None
     me, sc = snap.me, snap.sidecar
+    stopped = snap.refusing
     t = Text()
 
     def line(*parts) -> None:
@@ -735,8 +808,10 @@ def tip_for(snap: Snapshot, cols: list, key: str) -> Optional[Text]:
         line(("second line  exchanges sent ↑ and received ↓, pushes, repairs and probes together", INK2))
         line(("Each address's place in the protocol (ring successor, neighbor, repair pool, outside) is in its "
               "cell's tip.", MUTED))
-        if not snap.has_mesh:
-            line((NOT_YET, MUTED))
+        if stopped:
+            line((STOPPED_TIP, MUTED))
+        elif not snap.has_mesh:
+            line((NO_MESH_TIP, MUTED))
     elif key == "layer:record":
         line(("record", f"bold {INK}"), (" · what your grange holds for each teammate's id", INK2))
         line(*LEGEND["record"])
@@ -745,6 +820,8 @@ def tip_for(snap: Snapshot, cols: list, key: str) -> Optional[Text]:
         line(("second line  r rev, the content version; c counter, the liveness version (heartbeats); ↻ when it "
               "restarted, rejoined or joined in the last minute", INK2))
         line(("No bar: expired or left (and how long ago), or no record tied to the address yet.", MUTED))
+        if stopped:
+            line((STOPPED_TIP, MUTED))
     elif key == "layer:farm":
         line(("farm", f"bold {INK}"), (" · each teammate's agent-farm, as their grange relays it", INK2))
         line(*LEGEND["farm"])
@@ -753,6 +830,8 @@ def tip_for(snap: Snapshot, cols: list, key: str) -> Optional[Text]:
         line(("second line  how many agents that farm reports: a count only; who and what is agent-farm's and "
               "agent-frolic's business", INK2))
         line(("A farm pushes on every change and at least every 30 s (R5.2).", MUTED))
+        if stopped:
+            line((STOPPED_TIP, MUTED))
     elif key == "layer:verdict":
         line(("verdict", f"bold {INK}"), (" · one word per column: where it breaks, or that it holds", INK2))
         line(("Worked out by this app, not reported by anything: read each column from the top; the first layer "
@@ -771,6 +850,9 @@ def tip_for(snap: Snapshot, cols: list, key: str) -> Optional[Text]:
             line((f"{'breaks at' if tone in ('bad', 'you') else 'degraded at'} {layer}: ", INK2), (evidence, INK))
             if advice:
                 line(("— " + advice, MUTED))
+        elif col.vtone == "none":
+            line(("only the tailnet row is there to judge by: your grange is not running, so nothing else about "
+                  "this column is known", INK2))
         else:
             line(("every layer holds", INK2))
         line(("Source: worked out by this app from the rows above.", MUTED))
@@ -798,9 +880,13 @@ def tip_for(snap: Snapshot, cols: list, key: str) -> Optional[Text]:
             line(("bound", INK2), (f": its exchanges say it is {p.name} (R6.19)", MUTED))
         elif p.bound is False:
             line(("not bound yet", INK2), (": no good exchange has named it; the name is its sidecar's hostname", MUTED))
+        elif stopped:
+            line(("named by its sidecar's hostname", INK2),
+                 ("; your grange is not running, so it cannot say who answers there", MUTED))
         else:
             line(("named by its sidecar's hostname and its record's id", INK2),
-                 (f"; whether an exchange has bound the address needs {MESH}", MUTED))
+                 (f"; whether an exchange has named who answers there is in {MESH}, which this grange has not "
+                  f"answered", MUTED))
         line((f"Source: tailscale status (Peer.Online, HostName), {via(snap)}; read every 30 s by the grange's "
               "discovery.", MUTED))
     elif kind == "tailnet" and which == "me":
@@ -854,12 +940,15 @@ def tip_for(snap: Snapshot, cols: list, key: str) -> Optional[Text]:
             line((f"tx {size(tn.tx)} · rx {size(tn.rx)} over WireGuard so far", MUTED))
         line((f"Source: tailscale status (CurAddr, Relay, LastHandshake, TxBytes, RxBytes) and ping, {via(snap)}.",
               MUTED))
+    elif stopped and kind in ("gossip", "record", "farm") and col is not None:
+        line((col.label, f"bold {INK}"), (f" · {kind}", INK2))
+        if which == "me" and kind == "gossip":
+            since = f" for {age(me.stale_for)}" if me.stale_for is not None else ""
+            line(("✗ ", WAITING), ("stopped", INK), (f"{since}: built from {me.built or '?'}, the tag is at "
+                                                      f"{me.tag_commit or '?'}", INK2))
+        line((STOPPED_TIP, INK2))
     elif kind == "gossip" and which == "me":
         line(("you", f"bold {INK}"), (f" · gossip on {me.address or 'the tailnet'}", INK2))
-        if me.image_stale:
-            line(("✗ ", WAITING), ("your image is out of date", INK), (f": built {me.built}, the tag is at "
-                                                                       f"{me.tag_commit or '?'}; every route answers 503 "
-                                                                       f"until make update (R5.16)", INK2))
         line(("last good exchange, either direction: ", INK2),
              (f"{age(me.last_gossip_age)} ago" if me.last_gossip_age is not None else "never", INK))
         if me.sent is not None:
@@ -873,7 +962,7 @@ def tip_for(snap: Snapshot, cols: list, key: str) -> Optional[Text]:
         g = p.gossip
         line((col.name, f"bold {INK}"), (f" · {p.address}" if p.address else "", INK2))
         if g is None:
-            line((NOT_YET, INK2))
+            line((NO_MESH_TIP, INK2))
         else:
             role, why = ROLE_TIP.get(g.role, (g.role, ""))
             line((role, f"bold {INK}"), (f" — {why}", INK2))
@@ -895,7 +984,8 @@ def tip_for(snap: Snapshot, cols: list, key: str) -> Optional[Text]:
             line(("rev ", MUTED), (str(me.rev), INK), ("  content version: moves when your farm's list changes", INK2))
             line(("counter ", MUTED), (str(me.counter), INK), ("  liveness version: moves every 10 s heartbeat too", INK2))
         else:
-            line(("on the board; rev and counter ", INK2), (f"need {MESH}", MUTED))
+            line(("on the board", INK2),
+                 (f"; rev and counter come from {MESH}, which this grange has not answered", MUTED))
         line(("incarnation ", MUTED), (str(me.incarnation), INK), ("  chosen at start; on the top line", INK2))
         if me.duplicate_id:
             line(("✗ ", WAITING), ("another grange runs with your GRANGE_ID (R4.8)", INK))
@@ -910,7 +1000,7 @@ def tip_for(snap: Snapshot, cols: list, key: str) -> Optional[Text]:
                 line(("rev ", MUTED), (str(rec.rev), INK), ("  counter ", MUTED), (str(rec.counter), INK),
                      ("  incarnation ", MUTED), (str(rec.incarnation), INK))
             else:
-                line((f"rev, counter and incarnation need {MESH}", MUTED))
+                line((f"rev, counter and incarnation come from {MESH}, which this grange has not answered", MUTED))
             if rec.held_for is not None:
                 line((f"on the board here for {age(rec.held_for)}", MUTED))
             if p.back_age is not None and p.back_age < 60:
@@ -954,7 +1044,7 @@ def tip_for(snap: Snapshot, cols: list, key: str) -> Optional[Text]:
     if kind in ("head", "tailnet", "gossip", "record", "farm"):
         line(*LEGEND[kind])
         src = SOURCE_TIP.get((kind, "me" if which == "me" else "peer"))
-        if src:
+        if src and not (stopped and kind in ("gossip", "record", "farm")):
             line((src, MUTED))
         if col is not None and col.brk is not None and kind in LAYERS and LAYERS.index(kind) > col.brk:
             line(("Greyed: this column already breaks at ", MUTED), (LAYERS[col.brk], INK2),
@@ -967,5 +1057,5 @@ def recent(snap: Snapshot, kinds: tuple, within: float = 300.0) -> list:
     return [e for e in snap.events if e.kind in kinds and e.age <= within]
 
 
-__all__ = ["Cell", "Column", "View", "build", "grid", "diagnosis", "unreachable", "detail", "tip_for",
+__all__ = ["Cell", "Column", "View", "build", "grid", "diagnosis", "unreachable", "not_running", "detail", "tip_for",
            "fit_height", "layout", "strangers", "recent", "Event"]
