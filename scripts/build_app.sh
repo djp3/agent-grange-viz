@@ -34,7 +34,7 @@ step() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 # (MACOS_VERSION= stands in for this Mac's, for the tests.)
 NEEDS=$(/usr/libexec/PlistBuddy -c "Print :LSMinimumSystemVersion" macos/Info.plist)
 HAS=${MACOS_VERSION:-$(sw_vers -productVersion)}
-if [ "$(printf '%s\n%s\n' "$NEEDS" "$HAS" | sort -V | head -1)" != "$NEEDS" ]; then
+if [ "$(printf '%s\n%s\n' "$NEEDS" "$HAS" | sort -V | sed -n 1p)" != "$NEEDS" ]; then
     printf '%s\n' \
         "agent-grange-viz.app needs macOS ${NEEDS%.0} or later, and this Mac runs macOS $HAS." \
         "" \
@@ -59,9 +59,19 @@ BIN=macos/.build/release/AgentGrangeViz
 rm -f "$BIN"                                   # so an existing binary can only come from this build
 # Held to Package.resolved: left to itself SwiftPM moves a pin that the manifest has outgrown
 # and rewrites the file, mid-build, and the app would link a version no commit names.
-( cd macos && swift build --only-use-versions-from-resolved-file -c release --product AgentGrangeViz 2>&1 \
-    | grep -E "error|warning: unre|Build complete"
-  [ "${PIPESTATUS[0]}" -eq 0 ] )              # keep the compiler's verdict, not grep's
+# The compiler's verdict decides, and not a search of what it printed: piped into grep, a
+# build that printed nothing the search knows would have failed without a word, though it had
+# worked. So what it says goes to a log. If it fails, all of that is shown; if not, the lines
+# worth a glance, and a search that finds none is no failure.
+SWIFT_LOG=build/swift-build.log
+mkdir -p build
+if ! ( cd macos && swift build --only-use-versions-from-resolved-file -c release --product AgentGrangeViz ) \
+        > "$SWIFT_LOG" 2>&1; then
+    cat "$SWIFT_LOG" >&2
+    echo "swift build failed: what it said is above, and in $SWIFT_LOG" >&2
+    exit 1
+fi
+grep -E "warning: unre|Build complete" "$SWIFT_LOG" || true
 [ -x "$BIN" ] || { echo "swift build did not produce $BIN" >&2; exit 1; }
 # Sparkle comes as a binary framework that SwiftPM downloads next to the build.
 # -print -quit, here and below, not `| head -1`: under pipefail a find cut off by head

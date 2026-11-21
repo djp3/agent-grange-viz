@@ -152,6 +152,8 @@ Sparkle and poll nothing.
   nothing can be offered to them again. Keep a copy of it somewhere safe:
   `generate_keys --account agent-grange-viz -x <file>` exports it.
   `SPARKLE_PRIVATE_KEY_FILE=<file>` signs with an exported key instead of the keychain's.
+  It must be a file, not `-` or a pipe, though Sparkle's own tools take those: a release
+  reads the key three times (to check it is the app's, to sign, to verify).
   The first time `generate_appcast` reads the key, macOS asks whether it may.
 - `gh` logged in with push access to the repository.
 
@@ -171,11 +173,22 @@ already exists, release notes that are missing, and a Sparkle key that is missin
 keychain or is not the one in `Info.plist` (`scripts/check_sparkle_key.sh`; it asks for the
 key by this app's account, since a keychain can hold another project's). A key given as a
 file is held to the same: none of Sparkle's tools says a file's public half, so
-`scripts/sparkle_public_key.sh` works it out. After the build it
-refuses an appcast in which the zip or the feed came out unsigned (the
-zip does when the key Sparkle's tool was given is not the one in `Info.plist`, the feed when
-the app does not ask for a signed one). The tag is made last and removed again if publishing
-fails, so a second run starts clean.
+`scripts/sparkle_public_key.sh` works it out. Which key that is, is decided once: the check
+is given the same `--account` or `--ed-key-file` arguments the appcast will be signed with.
+A key that is there and could not be read (a keychain prompt refused, say) is reported in
+Sparkle's own words, not as a key that is missing.
+
+After the build it looks in the copy it built for what it asked for: the update feed, the
+app's key, and the two settings that make the app refuse an unsigned update. A copy without
+its feed would pass everything after this, be published, and never be offered another
+release. Then it refuses an appcast in which the zip or the feed came out unsigned (the zip
+does when the key Sparkle's tool was given is not the one in `Info.plist`, the feed when the
+app does not ask for a signed one), and one whose signature does not verify, with what
+`sign_update` said about it. The tag is made last and removed again if publishing fails, so
+a second run starts clean.
+
+`swift build`'s own exit status decides whether the host compiled. What it prints goes to
+`build/swift-build.log`, and all of it is shown when it fails.
 
 `scripts/sparkle_tools.sh` says where Sparkle's tools are. Nothing is downloaded for them:
 the package SwiftPM fetches for the build carries them beside the framework, under

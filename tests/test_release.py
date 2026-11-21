@@ -6,7 +6,6 @@ Sparkle's tools. The script itself, scripts/check_appcast.py and scripts/check_s
 are the real ones. So these show what a release does and what it refuses to do, which a test
 that only reads the script cannot: nothing is tagged or published unless the zip and the feed
 are both signed, and nothing is built with a key that is not the app's."""
-import plistlib
 import shutil
 import subprocess
 import sys
@@ -14,12 +13,9 @@ from pathlib import Path
 
 import pytest
 
-from sparkle_standins import GENERATE_KEYS, appcast, shim
+from sparkle_standins import ANOTHER_KEY, GENERATE_KEYS, PUBLIC_HALF, THE_APPS_KEY, appcast, shim
 
 ROOT = Path(__file__).resolve().parent.parent
-with open(ROOT / "macos" / "Info.plist", "rb") as _f:
-    THE_APPS_KEY = plistlib.load(_f)["SUPublicEDKey"]
-ANOTHER_KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="        # made up: thirty-two zero bytes
 VERSION = "9.9.9"
 
 NOTES_A_CALL = '#!/bin/sh\necho "{name} $*" >> "$CALLS"\n'
@@ -31,19 +27,26 @@ esac
 exit 0
 """
 GH = NOTES_A_CALL.format(name="gh") + '[ "$1 $2" = "release view" ] && exit 1      # no such release yet\nexit 0\n'
-SECURITY = '#!/bin/sh\necho \'  1) ABCDEF0123456789ABCDEF0123456789ABCDEF01 "Developer ID Application: Made Up (TEAM123456)"\'\n'
+SECURITY = ('#!/bin/sh\n'
+            'echo \'  1) ABCDEF0123456789ABCDEF0123456789ABCDEF01 "Developer ID Application: Made Up (TEAM123456)"\'\n')
 # scripts/build_app.sh: it notes how it was called, and whether it was asked for the copy
 # that updates itself (WITH_UPDATES), which only a release is.
+# The app it leaves has the source's Info.plist, and loses its feed unless it was asked for the
+# copy that updates itself, as the real build does. $BUILD_LOSES names keys it leaves out besides.
 BUILD = ('#!/bin/sh\necho "build_app $* WITH_UPDATES=${WITH_UPDATES:-}" >> "$CALLS"\n'
          "mkdir -p dist/agent-grange-viz.app/Contents\n"
-         "echo made-up > dist/agent-grange-viz.app/Contents/Info.plist\n")
-# scripts/sparkle_public_key.sh: the public half of the key file a test names ($FILE_HAS).
-PUBLIC_HALF = '#!/bin/sh\n[ -n "${FILE_HAS:-}" ] || exit 1\necho "$FILE_HAS"\n'
+         "cp macos/Info.plist dist/agent-grange-viz.app/Contents/Info.plist\n"
+         '[ "${WITH_UPDATES:-0}" = 1 ] || BUILD_LOSES="SUFeedURL ${BUILD_LOSES:-}"\n'
+         'for key in ${BUILD_LOSES:-}; do\n'
+         '    /usr/libexec/PlistBuddy -c "Delete :$key" dist/agent-grange-viz.app/Contents/Info.plist\n'
+         "done\n")
 GENERATE_APPCAST = NOTES_A_CALL.format(name="generate_appcast") + """out=""
 while [ $# -gt 0 ]; do [ "$1" = "-o" ] && out=$2; shift; done
 cp "$APPCAST" "$out"
 """
-SIGN_UPDATE = NOTES_A_CALL.format(name="sign_update") + "exit ${VERIFIES:-0}\n"
+# Sparkle's sign_update: when it fails ($VERIFIES) it says why on standard output ($SAYS), as the real one does.
+SIGN_UPDATE = (NOTES_A_CALL.format(name="sign_update")
+               + '[ "${VERIFIES:-0}" = 0 ] || echo "${SAYS:-Error: failed to verify}"\nexit ${VERIFIES:-0}\n')
 # scripts/sparkle_tools.sh refuses on its $TOOLS_REFUSED_AT'th call, when that is set.
 TOOLS_OR_NOT = """n=$(grep -c '^sparkle_tools' "$CALLS")
 if [ "$n" = "${TOOLS_REFUSED_AT:-}" ]; then echo "refusing to use it" >&2; exit 1; fi
@@ -180,6 +183,25 @@ def test_a_feed_whose_signature_does_not_verify_is_not_published(release):
     assert not (release.called("git tag") or release.called("git push") or release.called("gh release create"))
 
 
+@pytest.mark.parametrize("says", ["ERROR! Access denied. Can't get keys from the keychain.",
+                                  "ABORTED! You've cancelled the request to read the key from the Keychain.",
+                                  "1097 bytes were expected to be signed, but actually read 1103 bytes."])
+def test_why_the_appcast_did_not_verify_is_said_in_sign_updates_own_words(release, says):
+    """It says why on standard output, which was thrown away: a keychain prompt that was
+    refused, after the build and the notary, read as a signature that was wrong."""
+    done = release.run(VERIFIES="1", SAYS=says)
+    assert done.returncode == 1 and "sign_update said:" in done.stderr and says in done.stderr
+    assert release.nothing_left_this_mac() or release.called("xcrun notarytool submit")   # notarized, not published
+    assert not (release.called("git tag") or release.called("gh release create"))
+
+
+def test_a_key_that_sign_update_could_not_read_is_never_repeated_in_what_is_shown(release):
+    secret = "bm90IGEga2V5IGJ1dCBzZWNyZXQgYWxsIHRoZSBzYW1l"
+    done = release.run(VERIFIES="1", SAYS=f"ERROR! Failed to decode base64 encoded key data from: {secret}")
+    assert done.returncode == 1 and secret not in done.stderr + done.stdout
+    assert "key data from: (not shown)" in done.stderr
+
+
 @pytest.mark.parametrize("answer, said", [(ANOTHER_KEY, "is not the one in macos/Info.plist"),
                                            (None, "no Sparkle key in the login keychain")])
 def test_a_key_that_is_not_the_apps_is_found_before_anything_is_built(release, answer, said):
@@ -203,6 +225,22 @@ def test_a_key_file_named_from_where_the_script_was_called_is_still_found(releas
     assert gone.returncode == 1 and "names no file that can be read" in gone.stderr
 
 
+def test_the_key_that_is_checked_is_the_key_that_signs(release):
+    """Which key is decided once, in the release, and the check is handed that decision."""
+    release.run(dry=True, SPARKLE_ACCOUNT="another-account")
+    assert (release.where / "asked").read_text().splitlines() == ["--account another-account -p"]
+    assert "--account another-account" in release.called("generate_appcast")[0]
+    assert release.called("sign_update")[0].startswith("sign_update --verify --account another-account ")
+    assert 'scripts/check_sparkle_key.sh "$TOOLS" "${SPARKLE_KEY_ARGS[@]}"' in (ROOT / "scripts" / "release.sh").read_text()
+
+
+def test_a_key_on_standard_input_is_not_taken_for_a_file_named_dash(release):
+    done = release.run(SPARKLE_PRIVATE_KEY_FILE="-")
+    assert done.returncode == 1 and "must be a file" in done.stderr
+    assert f"{release.where}/-" not in done.stderr and "names no file" not in done.stderr
+    assert not release.called("build_app") and release.nothing_left_this_mac()
+
+
 def test_a_key_file_whose_key_is_not_the_apps_is_found_before_anything_is_built(release):
     (release.where / "exported.key").write_text("made up")
     done = release.run(SPARKLE_PRIVATE_KEY_FILE="exported.key", FILE_HAS=ANOTHER_KEY)
@@ -218,6 +256,31 @@ def test_a_release_and_a_dry_run_of_one_build_the_copy_that_updates_itself(relea
     again = Release(release.where / "again")
     again.run(dry=True)
     assert again.called("build_app")[0].endswith("WITH_UPDATES=1")
+
+
+@pytest.mark.parametrize("lost, said", [
+    ("SUFeedURL", "does not carry the update feed: installed, it would never update again"),
+    ("SURequireSignedFeed", "does not set SURequireSignedFeed"),
+    ("SUVerifyUpdateBeforeExtraction", "does not set SUVerifyUpdateBeforeExtraction"),
+    ("SUPublicEDKey", "does not carry the app's Sparkle key")])
+@pytest.mark.parametrize("dry", [False, True])
+def test_a_copy_that_would_not_update_itself_is_not_published(release, lost, said, dry):
+    """Its appcast would be signed and verify all the same, so nothing after the build would
+    stop it: and nobody who installed that copy would ever be offered another."""
+    done = release.run(dry=dry, BUILD_LOSES=lost)
+    assert done.returncode == 1 and said in done.stderr, lost
+    assert release.called("build_app") and not release.called("generate_appcast")
+    assert release.nothing_left_this_mac() and "dry run finished" not in done.stdout
+
+
+def test_a_build_that_was_not_asked_for_the_copy_that_updates_is_caught(release):
+    """Should the release ever stop saying it is one (WITH_UPDATES=1), the build leaves the
+    feed out, as it does for a copy built by hand."""
+    script = release.root / "scripts" / "release.sh"
+    script.write_text(script.read_text().replace("WITH_UPDATES=1 PYTHON=", "PYTHON="))
+    done = release.run()
+    assert done.returncode == 1 and "does not carry the update feed" in done.stderr
+    assert release.nothing_left_this_mac()
 
 
 def test_without_notes_or_from_a_dirty_tree_nothing_is_built(release):

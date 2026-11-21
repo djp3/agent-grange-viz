@@ -4,8 +4,13 @@
 tools, so that a script can be run for real with no keychain asked and no network reached."""
 from __future__ import annotations
 
+import plistlib
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parent.parent
+with open(ROOT / "macos" / "Info.plist", "rb") as _f:
+    THE_APPS_KEY = plistlib.load(_f)["SUPublicEDKey"]            # the public half installed copies trust
+ANOTHER_KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="        # made up: thirty-two zero bytes
 SIGNATURE = "hKCB3wzZctOg9isMgUzf4m8b3jGOw/B9UIjT+m92mP1SaproXMd/bntCqfIk8yU9UGeQXwNA9XcK2ztR29QgCA=="
 
 
@@ -39,9 +44,19 @@ def appcast(zip_signed: bool = True, feed_signed: bool = True, notes: bool = Tru
 
 
 # Sparkle's generate_keys: it notes how it was asked ($ASKED), and answers what it was told to
-# ($ANSWER), or that there is no key.
+# ($ANSWER). With no answer it fails as the real one does, saying why on standard output, where
+# the answer would have been: that there is no key, or whatever else a test has it say ($FAILS).
 GENERATE_KEYS = """#!/bin/sh
 echo "$*" >> "$ASKED"
-[ -n "${ANSWER:-}" ] || { echo "ERROR: No existing signing key found!" >&2; exit 1; }
+[ -n "${ANSWER:-}" ] || { echo "ERROR: ${FAILS:-No existing signing key found!}"; exit 1; }
 echo "$ANSWER"
+"""
+
+# scripts/sparkle_public_key.sh: it notes the file it was asked about ($ASKED_OF_FILE, when a test
+# wants to know), and answers with the public half it was told that file has ($FILE_HAS), or
+# that the file holds no key.
+PUBLIC_HALF = """#!/bin/sh
+[ -z "${ASKED_OF_FILE:-}" ] || echo "$1" >> "$ASKED_OF_FILE"
+[ -n "${FILE_HAS:-}" ] || { echo "sparkle key: the file is not base64 text" >&2; exit 1; }
+echo "$FILE_HAS"
 """

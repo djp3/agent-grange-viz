@@ -112,11 +112,25 @@ def test_each_tool_has_a_pinned_hash_for_the_version_the_app_links():
         assert len(pinned) == 64 and set(pinned) <= set("0123456789abcdef"), name
 
 
-def test_on_a_built_checkout_it_names_the_tools_swiftpm_fetched():
+def test_on_a_built_checkout_it_names_the_tools_swiftpm_fetched(tmp_path):
+    """The real script on the real checkout, for the tools that are already there, and with
+    a `swift` that refuses. With the real one, a build folder whose tools are gone, or are
+    another version's, would have SwiftPM resolve the packages in the middle of the tests:
+    from the network, and changing the checkout. The tests reach neither."""
     if not (ROOT / "macos" / ".build" / "artifacts").is_dir():
         pytest.skip("this checkout has not been built: nothing was fetched")
-    got = subprocess.run(["/bin/bash", str(SCRIPT)], capture_output=True, text=True, timeout=120)
+    refuses = tmp_path / "bin" / "swift"
+    refuses.parent.mkdir()
+    refuses.write_text(f'#!/bin/sh\necho "$@" >> "{tmp_path}/swift-asked"\n'
+                       'echo "a test fetches nothing" >&2\nexit 97\n')
+    refuses.chmod(0o755)
+    got = subprocess.run(["/bin/bash", str(SCRIPT)], capture_output=True, text=True, timeout=120,
+                         env={**os.environ, "PATH": f"{refuses.parent}:/usr/bin:/bin"})
+    if (tmp_path / "swift-asked").exists():
+        assert got.returncode != 0 and got.stdout == ""                 # it asked, was refused, and named nothing
+        pytest.skip("the tools in macos/.build are not the pinned ones (or are gone): build again to have them")
     assert got.returncode == 0, got.stderr
     there = Path(got.stdout.strip())
     assert there.is_relative_to(ROOT / "macos" / ".build" / "artifacts")
     assert all(os.access(there / "bin" / name, os.X_OK) for name in TOOLS)
+
