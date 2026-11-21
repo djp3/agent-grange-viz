@@ -81,10 +81,15 @@ def test_sparkle_is_carried_checked_and_signed_inside_out():
     assert carried < build.index('scripts/check_min_macos.py "$APP"') < build.index('scripts/sign_app.sh "$APP"'), \
         "in the bundle before the macOS minimum is checked, and before anything is signed"
     sign = read("scripts", "sign_app.sh")
-    order = [sign.index(part) for part in ("Downloader.xpc", "Installer.xpc", "Autoupdate", "Updater.app",
-                                           'sign "$FW"', 'sign "$APP"')]
-    assert order == sorted(order), "its helpers, then the framework, then the app"
-    assert "sign --preserve-metadata=entitlements" in sign, "the helpers keep the entitlements they ship with"
+    steps = [line.strip() for line in sign.splitlines() if line.startswith("sign ")]
+    sparkle = [step for step in steps if "$FW" in step]
+    assert sparkle == ['sign "$FW/Versions/B/XPCServices/Installer.xpc"',
+                       'sign --preserve-metadata=entitlements "$FW/Versions/B/XPCServices/Downloader.xpc"',
+                       'sign "$FW/Versions/B/Autoupdate"',
+                       'sign "$FW/Versions/B/Updater.app"',
+                       'sign "$FW"'], "Sparkle's own recipe: only the downloader keeps what it ships with"
+    assert steps.index('sign "$FW"') < steps.index('sign "$APP"'), "the framework before the app that carries it"
+    assert "--deep" not in " ".join(steps)
 
 
 def test_the_menu_offers_a_check_and_a_development_run_updates_nothing():
