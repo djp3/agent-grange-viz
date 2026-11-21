@@ -63,7 +63,9 @@ rm -f "$BIN"                                   # so an existing binary can only 
   [ "${PIPESTATUS[0]}" -eq 0 ] )              # keep the compiler's verdict, not grep's
 [ -x "$BIN" ] || { echo "swift build did not produce $BIN" >&2; exit 1; }
 # Sparkle comes as a binary framework that SwiftPM downloads next to the build.
-SPARKLE_FW=$(find macos/.build/artifacts -type d -name Sparkle.framework -path "*macos-*" | head -1)
+# -print -quit, here and below, not `| head -1`: under pipefail a find cut off by head
+# fails the pipeline, and the assignment would end the script with nothing said.
+SPARKLE_FW=$(find macos/.build/artifacts -type d -name Sparkle.framework -path "*macos-*" -print -quit)
 [ -d "$SPARKLE_FW" ] || { echo "Sparkle.framework not found under macos/.build/artifacts" >&2; exit 1; }
 
 step "icon"
@@ -102,7 +104,7 @@ cp "$ICNS" "$APP/Contents/Resources/AppIcon.icns"
 cp LICENSE NOTICE "$APP/Contents/Resources/"
 # Sparkle's framework is carried whole, and its license asks that every copy carry its
 # notice. The text comes with the package SwiftPM fetched, beside the framework.
-SPARKLE_LICENSE=$(find macos/.build/artifacts -maxdepth 3 -type f -name LICENSE | head -1)
+SPARKLE_LICENSE=$(find macos/.build/artifacts -maxdepth 3 -type f -name LICENSE -print -quit)
 [ -s "$SPARKLE_LICENSE" ] || { echo "Sparkle's LICENSE not found under macos/.build/artifacts: the app must not carry the framework without it" >&2; exit 1; }
 cp "$SPARKLE_LICENSE" "$APP/Contents/Resources/LICENSE-Sparkle"
 sed "s/__VERSION__/$VERSION/g" macos/Info.plist > "$APP/Contents/Info.plist"

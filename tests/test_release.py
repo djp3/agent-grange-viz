@@ -206,6 +206,19 @@ def test_without_notes_or_from_a_dirty_tree_nothing_is_built(release):
     assert not release.called("build_app") and release.nothing_left_this_mac()
 
 
+def test_a_keychain_that_is_still_talking_does_not_end_the_release(release):
+    """Under `set -o pipefail` a pipeline fails when its reader leaves early and the writer is
+    killed for writing to nobody. The identity was read with an awk that stopped at the first
+    match: with more to come from `security`, the script ended there, with nothing said."""
+    shim(release.root / "bin" / "security", SECURITY.rstrip("\n") + """
+sleep 0.3
+i=0; while [ $i -lt 2000 ]; do echo "     another line, after the one that was wanted"; i=$((i+1)); done
+""")
+    done = release.run(dry=True)
+    assert done.returncode == 0, f"ended with {done.returncode}: {done.stderr[-300:]!r}"
+    assert "identity: Developer ID Application: Made Up (TEAM123456)" in done.stdout
+
+
 def test_when_the_tools_cannot_be_had_nothing_is_built(release):
     done = release.run(TOOLS_REFUSED_AT="1")
     assert done.returncode != 0 and "refusing to use it" in done.stderr

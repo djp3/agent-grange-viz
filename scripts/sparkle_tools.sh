@@ -58,7 +58,8 @@ fi
 # Where SwiftPM unpacked Sparkle's package: the folder whose bin/ holds the tools.
 where() {
     local tool
-    tool=$(find macos/.build/artifacts -type f -name generate_appcast -path "*/bin/*" 2>/dev/null | head -1)
+    # -print -quit, not `| head -1`: under pipefail a find cut off by head fails the pipeline.
+    tool=$(find macos/.build/artifacts -type f -name generate_appcast -path "*/bin/*" -print -quit 2>/dev/null || true)
     [ -n "$tool" ] && (cd "$(dirname "$tool")/.." && pwd)
     return 0
 }
