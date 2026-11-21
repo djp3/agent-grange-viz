@@ -66,10 +66,10 @@ def test_the_tools_that_are_handed_the_key_are_pinned_by_hash():
     pins = json.loads(read("macos", "Package.resolved"))["pins"]
     version = next(pin["state"]["version"] for pin in pins if pin["identity"] == "sparkle")
     fetch = read("scripts", "fetch_sparkle_tools.sh")
-    assert re.search(rf'^\s*{re.escape(version)}\) echo "[0-9a-f]{{64}}" ;;$', fetch, re.M), \
-        f"no pinned SHA-256 for Sparkle {version}, the version the app links"
-    assert "shasum -a 256 -c --status" in fetch and fetch.index("shasum -a 256") < fetch.index("tar -xJf"), \
-        "checked before anything is unpacked"
+    for what in ("tarball", "generate_appcast", "generate_keys", "sign_update"):
+        assert re.search(rf'^\s*{re.escape(version)}:{what}\)\s+echo "[0-9a-f]{{64}}" ;;$', fetch, re.M), \
+            f"no pinned SHA-256 for the {what} of Sparkle {version}, the version the app links"
+    # that the script acts on them is tests/test_sparkle_tools.py's to show: it runs it
     package = read("macos", "Package.swift")
     assert "https://github.com/sparkle-project/Sparkle.git" in package
     assert "@executable_path/../Frameworks" in package, "where the app finds the framework it carries"
