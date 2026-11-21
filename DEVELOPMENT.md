@@ -25,7 +25,7 @@ only Python's standard library.
 | `docs/` | `openapi.yaml`, the specification of `GET /v1/mesh` and its companions; `data-sources.md`, the survey behind it; `screenshot.png`, for the README |
 | `macos/` | the SwiftPM package for the host app (`Package.swift`, `Sources/AgentGrangeViz`, `Info.plist`, the icon) |
 | `packaging/` | the PyInstaller spec for the Python side |
-| `scripts/` | `build_app.sh`, `sign_app.sh`, `release.sh`, `fetch_sparkle_tools.sh`, `locked_venv.sh`, `check_min_macos.py`, `render_icon.sh`, `make_icon.sh` |
+| `scripts/` | `build_app.sh`, `sign_app.sh`, `release.sh`, `fetch_sparkle_tools.sh`, `check_appcast.py`, `locked_venv.sh`, `check_min_macos.py`, `render_icon.sh`, `make_icon.sh` |
 | `release-notes/` | one file per release, written for people who use the app |
 | `tests/` | plain pytest; `standins.py` holds a stand-in grange and a stand-in Docker |
 | `VERSION` | the single source of the version number |
@@ -109,6 +109,14 @@ with this app's EdDSA key, tags `v<VERSION>` and publishes the GitHub release wi
 and `appcast.xml` attached. The notes in `release-notes/<VERSION>.md` go into the appcast,
 where Sparkle's update window shows them, and onto the GitHub release.
 
+The key signs twice. The zip's signature sits in the appcast's `<enclosure>`, and the app
+checks it before it unpacks an update (`SUVerifyUpdateBeforeExtraction`). The appcast's own
+signature is a comment at its end, and covers the rest: which version is on offer, which
+macOS it needs, where the zip is, the notes. The app takes no feed without it
+(`SURequireSignedFeed`), and Sparkle will not start with that key set and the other missing.
+`scripts/check_appcast.py` and Sparkle's `sign_update --verify` hold the release to both
+before anything is tagged.
+
 Installed apps poll
 `https://github.com/djp3/agent-grange-viz/releases/latest/download/appcast.xml` once a day,
 so creating the release is what ships the update. Copies of 0.1.1 and 0.1.2 came before
@@ -128,8 +136,9 @@ Sparkle and poll nothing.
 
       .sparkle-tools/<ver>/bin/generate_keys --account agent-grange-viz -p    # prints that public key
 
-  Apps already installed accept updates signed with this key only, so keep a copy of it
-  somewhere safe: `generate_keys --account agent-grange-viz -x <file>` exports it.
+  Apps already installed take no feed that is not signed with this key, so if it is lost
+  nothing can be offered to them again. Keep a copy of it somewhere safe:
+  `generate_keys --account agent-grange-viz -x <file>` exports it.
   `SPARKLE_PRIVATE_KEY_FILE=<file>` signs with an exported key instead of the keychain's.
   The first time `generate_appcast` reads the key, macOS asks whether it may.
 - `gh` logged in with push access to the repository.
@@ -146,9 +155,10 @@ Sparkle and poll nothing.
 `dist/`, then stops: nothing is sent to Apple or GitHub, and nothing is tagged.
 
 The script refuses a working tree that is not clean, a tag that already exists, release
-notes that are missing, and an appcast that came out unsigned (which is what Sparkle's tool
-writes when the key it was given is not the one in `Info.plist`). The tag is made last and
-removed again if publishing fails, so a second run starts clean.
+notes that are missing, and an appcast in which the zip or the feed came out unsigned (the
+zip does when the key Sparkle's tool was given is not the one in `Info.plist`, the feed when
+the app does not ask for a signed one). The tag is made last and removed again if publishing
+fails, so a second run starts clean.
 
 `scripts/fetch_sparkle_tools.sh` downloads the tools of the Sparkle release the app links
 into `.sparkle-tools/`, and unpacks them only if the download matches the SHA-256 pinned in

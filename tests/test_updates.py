@@ -33,6 +33,15 @@ def test_the_app_knows_where_to_look_and_whom_to_trust():
     assert "SUEnableSystemProfiling" not in plist, "nothing about the Mac is sent with the check"
 
 
+def test_the_app_takes_no_feed_that_is_not_signed():
+    """Without SURequireSignedFeed only the zip is signed: whoever could change appcast.xml
+    could rewrite the notes or hide an update, and the app would believe it. Sparkle will not
+    start with that key set and SUVerifyUpdateBeforeExtraction missing."""
+    plist = info()
+    assert plist["SURequireSignedFeed"] is True
+    assert plist["SUVerifyUpdateBeforeExtraction"] is True
+
+
 def test_a_release_attaches_the_appcast_the_app_looks_for():
     release = read("scripts", "release.sh")
     assert f"REPO=${{GITHUB_REPO:-{REPO}}}" in release
@@ -43,11 +52,14 @@ def test_a_release_attaches_the_appcast_the_app_looks_for():
     assert '--download-url-prefix "https://github.com/$REPO/releases/download/$TAG/"' in release
 
 
-def test_nothing_is_tagged_before_the_appcast_is_signed():
+def test_nothing_is_tagged_before_the_zip_and_the_feed_are_both_seen_to_be_signed():
     release = read("scripts", "release.sh")
-    signed = release.index('die "appcast.xml carries no EdDSA signature"')
-    assert release.index("generate_appcast\"") < signed < release.index('git tag -a "$TAG"')
-    assert signed < release.index('if [ "$DRY_RUN" = 1 ]; then\n    echo\n'), "a dry run writes and checks it too"
+    shape = release.index("scripts/check_appcast.py dist/appcast/appcast.xml || die")
+    verified = release.index('"$TOOLS/bin/sign_update" --verify "${SPARKLE_KEY_ARGS[@]}" dist/appcast/appcast.xml')
+    assert release.index("generate_appcast\"") < shape < verified < release.index('git tag -a "$TAG"')
+    assert verified < release.index('if [ "$DRY_RUN" = 1 ]; then\n    echo\n'), "a dry run writes and checks it too"
+    assert 'grep -q "sparkle:edSignature"' not in release, \
+        "that finds the zip's signature and passes a feed that has none of its own"
 
 
 def test_the_tools_that_are_handed_the_key_are_pinned_by_hash():

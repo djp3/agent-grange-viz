@@ -40,7 +40,11 @@
 	<string>https://github.com/djp3/agent-grange-viz/releases/latest/download/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>7EoAW/GqDdaIDVvkGtBKVh6GDwn5OfiWvK66x/aap6Y=</string>
+	<key>SURequireSignedFeed</key>
+	<true/>
 	<key>SUScheduledCheckInterval</key>
 	<integer>86400</integer>
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
 </dict>
 </plist>
