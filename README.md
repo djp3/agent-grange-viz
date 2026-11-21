@@ -97,8 +97,8 @@ settings and log stay in that folder.
 Under the title bar, from top to bottom:
 
 - **The top line**: this Mac's grange (its id, tailnet address, group, incarnation and
-  cursor), how many granges were found and how many are live, and the clock. When the grange
-  cannot be reached, or is not running, this line says that instead.
+  cursor), and how many granges were found and how many are live. When the grange cannot be
+  reached, or is not running, this line says that instead.
 - **Two panels.** On the left, **liveness**: every record's seen age as a dot on an axis from
   0 to 60 seconds, the expiry wall at its end, with the slow ones named, what has no record
   and why, what expired, left, restarted or joined in the last five minutes, and the oldest

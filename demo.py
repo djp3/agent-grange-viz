@@ -166,7 +166,7 @@ class DemoSource:
                           grange=GRANGE_NAME, grange_state="running", grange_health="healthy"),
             reachable=not down, unreachable_for=since if down else None, ever_reached=True,
             has_mesh=True, has_sidecar=True, demo=True, port=DEFAULT_PORT,
-            clock=f"{_age(now % LOOP)} into the loop")
+            loop=f"{_age(now % LOOP)} into the loop")
 
     def _me(self) -> Me:
         sim, me, now = self.sim, self.sim.me, self.sim.now

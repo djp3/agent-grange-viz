@@ -390,7 +390,7 @@ class LiveSource:
     def snapshot(self) -> Snapshot:
         with self._lock:
             now = self._clock()
-            snap = Snapshot(port=self.port, clock=time.strftime("%H:%M:%S", time.localtime(self._wall())))
+            snap = Snapshot(port=self.port)
             snap.reachable = self._reachable
             snap.ever_reached = self._ever
             snap.unreachable_for = None if self._reachable or self._lost_at is None else now - self._lost_at

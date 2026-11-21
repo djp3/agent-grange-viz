@@ -5,8 +5,8 @@ agent-grange-viz: watch agent-grange's communication plane, and see where it bre
 
 One window, read top to bottom:
 
-- The top line: this Mac's grange (id, tailnet address, group, incarnation, cursor), how many
-  granges were found and are live, and the clock.
+- The top line: this Mac's grange (id, tailnet address, group, incarnation, cursor), and how
+  many granges were found and are live. In the demo, where the demo is in its loop.
 - Two panels. Left, liveness: every record's seen age as a dot on a 0–60 s axis against the
   expiry wall. Right, tailnet: direct vs DERP, round trips, path changes, tailscaled's health.
 - The Stack (stack.py): a column for every grange, a row for every layer, a verdict under each
@@ -379,11 +379,13 @@ class GrangeViz(App):
                 right.append(f"{found} found" + (f" · {me.peers_live} live" if me.peers_live is not None else ""), style=MUTED)
                 if not snap.has_mesh and not snap.demo:
                     right.append(" · /v1/mesh: no answer", style=MUTED)
-                right.append("   ", style=MUTED)
-        right.append(snap.clock, style=INK2)
-        if snap.demo:
+        if snap.demo:                                 # where the demo is in its loop, and how fast it runs
+            right.append(("   " if right.cell_len else "") + snap.loop, style=INK2)
             paused = getattr(self.source, "paused", False)
             right.append("  ❚❚" if paused else f"  ▶ {getattr(self.source, 'speed', 1)}×", style=WAITING if paused else MUTED)
+        if not right.cell_len:                        # nothing for the right-hand end: the line is all the left's
+            t.truncate(max(0, width - 2), overflow="ellipsis")
+            return t
         pad = max(1, width - 2 - t.cell_len - right.cell_len)
         if pad == 1 and t.cell_len + right.cell_len + 3 > width:
             t.truncate(max(0, width - 3 - right.cell_len), overflow="ellipsis")

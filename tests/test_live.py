@@ -66,6 +66,7 @@ def test_records_are_joined_to_devices_by_hostname(grange, docker):
     snap = src.snapshot()
     assert snap.reachable and snap.ever_reached and snap.unreachable_for is None
     assert snap.has_sidecar and not snap.has_mesh and not snap.demo and snap.port == grange.port
+    assert not hasattr(snap, "clock") and snap.loop == "", "no time of day goes to the window"
     peers = by_name(snap)
     assert set(peers) == {"alice", "bob", "carol"}
 

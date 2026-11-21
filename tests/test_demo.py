@@ -41,7 +41,7 @@ def test_a_snapshot_says_it_is_a_demo_with_everything_filled():
     snap = at(100)
     assert snap.demo and snap.has_mesh and snap.has_sidecar and snap.reachable and snap.ever_reached
     assert snap.port == DEFAULT_PORT and snap.unreachable_for is None
-    assert snap.clock == "1m40 into the loop"
+    assert snap.loop == "1m40 into the loop"
     me = snap.me
     assert (me.gid, me.address, me.group) == ("djp3", "100.64.0.5:7789", "default")
     assert me.incarnation == ORIGINAL_INCARNATION and me.cursor > 1
