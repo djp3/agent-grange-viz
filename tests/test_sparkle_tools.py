@@ -141,6 +141,30 @@ def test_a_download_that_fails_leaves_nothing_behind(checkout):
     assert not (checkout / ".sparkle-tools" / VERSION).exists()
 
 
+# ---- which version ------------------------------------------------------------------------------------
+def broken_python(checkout: Path) -> None:
+    shim(checkout / "bin" / "python3", "#!/bin/sh\nexit 1\n")
+
+
+def test_when_the_pin_cannot_be_read_it_says_so_and_goes_by_the_manifest(checkout):
+    """Under `set -e` an assignment takes the exit status of the command inside it: with a
+    python3 that fails, the script used to end on that line, silently, before the fallback on
+    the next line or the message after it."""
+    broken_python(checkout)
+    done = run(checkout)
+    assert "could not read Sparkle's version from macos/Package.resolved" in done.stderr
+    assert called(checkout) and f"Sparkle-{VERSION}.tar.xz" in (checkout / "curl.log").read_text(), \
+        "it went on, with the version macos/Package.swift names"
+
+
+def test_when_no_version_can_be_found_it_says_so(checkout):
+    broken_python(checkout)
+    (checkout / "macos" / "Package.swift").write_text("// no Sparkle here\n")
+    done = run(checkout)
+    assert done.returncode == 1 and done.stdout == "" and not called(checkout)
+    assert "could not determine the Sparkle version" in done.stderr
+
+
 def test_a_version_with_no_pinned_hash_is_refused_before_anything_is_fetched(checkout):
     done = run(checkout, SPARKLE_VERSION="2.11.0")
     assert done.returncode == 1 and "no pinned SHA-256 for Sparkle 2.11.0" in done.stderr

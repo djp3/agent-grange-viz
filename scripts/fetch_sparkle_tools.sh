@@ -41,8 +41,13 @@ for pin in json.load(open("macos/Package.resolved"))["pins"]:
         print(pin["state"]["version"]); break
 PY
 }
-VER=${SPARKLE_VERSION:-$(resolved_version)}
-[ -n "$VER" ] || VER=$(sed -n 's/.*sparkle-project\/Sparkle.git", from: "\([0-9.]*\)".*/\1/p' macos/Package.swift)
+# `|| true`: under `set -e` an assignment takes the exit status of the command inside it, so
+# a python3 that fails would end the script here, with nothing said, before the lines below.
+VER=${SPARKLE_VERSION:-$(resolved_version || true)}
+if [ -z "$VER" ]; then
+    echo "could not read Sparkle's version from macos/Package.resolved (is python3 working?); going by macos/Package.swift" >&2
+    VER=$(sed -n 's/.*sparkle-project\/Sparkle.git", from: "\([0-9.]*\)".*/\1/p' macos/Package.swift || true)
+fi
 [ -n "$VER" ] || { echo "could not determine the Sparkle version" >&2; exit 1; }
 SHA=$(pinned_sha256 "$VER" tarball)
 [ -n "$SHA" ] || { echo "no pinned SHA-256 for Sparkle $VER in $0; add it alongside the version bump" >&2; exit 1; }
