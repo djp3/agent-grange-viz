@@ -98,6 +98,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Loca
         if coreRunning { terminal.terminate() }
     }
 
+    /// Closing the viewer's window quits the app, whatever else is open. With one window that
+    /// was applicationShouldTerminateAfterLastWindowClosed's doing. Sparkle's update window is
+    /// a window too: with it open the app stayed in the Dock, with nothing left to show.
+    func windowWillClose(_ note: Notification) {
+        guard (note.object as? NSWindow) === window else { return }
+        DispatchQueue.main.async { NSApp.terminate(nil) }
+    }
+
     /// Only the assembled app updates itself: a `swift run` has no Info.plist, so no feed
     /// and no key to check an update against.
     private func setupUpdater() {
@@ -118,6 +126,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Loca
         w.tabbingMode = .disallowed
         w.backgroundColor = Theme.background
         w.delegate = self
+        // AppKit frees a closed window by default, while this object goes on holding it: a
+        // title that arrives after the close would be written to freed memory.
+        w.isReleasedWhenClosed = false
         w.center()
         w.setFrameAutosaveName("agent-grange-viz.main")
 

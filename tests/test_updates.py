@@ -84,6 +84,19 @@ def test_the_menu_offers_a_check_and_a_development_run_updates_nothing():
     assert swift.index("setupUpdater()") < swift.index("buildMenus()"), "the item is built with its target in hand"
 
 
+def test_closing_the_viewers_window_quits_whatever_else_is_open():
+    """Sparkle's update window is a window too. With it open, closing the viewer's window left
+    the app running with nothing to show: the app only quit after its last window. (Seen on a
+    scratch copy offered a made-up update.)"""
+    swift = read("macos", "Sources", "AgentGrangeViz", "AppDelegate.swift")
+    assert "w.delegate = self" in swift, "the app hears of its window closing"
+    closing = swift[swift.index("func windowWillClose("):]
+    closing = closing[:closing.index("\n    }\n")]
+    assert "=== window" in closing, "the viewer's window, not one of Sparkle's"
+    assert "NSApp.terminate(nil)" in closing
+    assert "w.isReleasedWhenClosed = false" in swift, "nor is the window freed while the app still holds it"
+
+
 def test_what_the_tools_leave_behind_is_not_committed():
     assert ".sparkle-tools/" in read(".gitignore").split()
 
