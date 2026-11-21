@@ -100,6 +100,11 @@ cp "$ICNS" "$APP/Contents/Resources/AppIcon.icns"
 # every copy of the app: the license asks for both. The icon is this project's own drawing,
 # so there are no credits to carry beside them.
 cp LICENSE NOTICE "$APP/Contents/Resources/"
+# Sparkle's framework is carried whole, and its license asks that every copy carry its
+# notice. The text comes with the package SwiftPM fetched, beside the framework.
+SPARKLE_LICENSE=$(find macos/.build/artifacts -maxdepth 3 -type f -name LICENSE | head -1)
+[ -s "$SPARKLE_LICENSE" ] || { echo "Sparkle's LICENSE not found under macos/.build/artifacts: the app must not carry the framework without it" >&2; exit 1; }
+cp "$SPARKLE_LICENSE" "$APP/Contents/Resources/LICENSE-Sparkle"
 sed "s/__VERSION__/$VERSION/g" macos/Info.plist > "$APP/Contents/Info.plist"
 # Only a build signed with a Developer ID, which is what a release is, looks for updates. A
 # local build is made without the feed: it has the installed copy's bundle id, and so its

@@ -86,6 +86,18 @@ def test_sparkle_is_carried_checked_and_signed_inside_out():
     assert "--deep" not in " ".join(steps)
 
 
+def test_sparkles_license_goes_wherever_its_framework_goes():
+    """Its license asks that every copy carry its notice. The app only named it."""
+    build = read("scripts", "build_app.sh")
+    copied = build.index('cp "$SPARKLE_LICENSE" "$APP/Contents/Resources/LICENSE-Sparkle"')
+    refused = build.index('[ -s "$SPARKLE_LICENSE" ] || {')
+    assert refused < copied < build.index('scripts/sign_app.sh "$APP"'), "there, or no build; and sealed by the signature"
+    assert "LICENSE-Sparkle" in read("NOTICE")
+    built = ROOT / "dist" / "agent-grange-viz.app" / "Contents"
+    if (built / "Frameworks" / "Sparkle.framework").is_dir():          # an app was built here: look at it
+        assert "Permission is hereby granted" in (built / "Resources" / "LICENSE-Sparkle").read_text()
+
+
 def test_the_menu_offers_a_check_and_only_a_copy_with_a_feed_updates_itself():
     swift = read("macos", "Sources", "AgentGrangeViz", "AppDelegate.swift")
     assert 'NSMenuItem(title: "Check for Updates…"' in swift
