@@ -33,33 +33,36 @@ def test_the_app_knows_where_to_look_and_whom_to_trust():
     assert "SUEnableSystemProfiling" not in plist, "nothing about the Mac is sent with the check"
 
 
-def test_a_release_attaches_the_appcast_the_app_looks_for():
-    release = read("scripts", "release.sh")
-    assert f"REPO=${{GITHUB_REPO:-{REPO}}}" in release
-    assert "SPARKLE_ACCOUNT=${SPARKLE_ACCOUNT:-agent-grange-viz}" in release, "this app's key, nobody else's"
-    assert '--notes-file dist/release-notes.md "$ZIP" dist/appcast/appcast.xml' in release, \
-        "the zip and the appcast go up together: releases/latest/download/appcast.xml is the feed"
-    assert "--embed-release-notes" in release, "the notes travel inside the signed appcast"
-    assert '--download-url-prefix "https://github.com/$REPO/releases/download/$TAG/"' in release
+def test_the_app_takes_no_feed_that_is_not_signed():
+    """Without SURequireSignedFeed only the zip is signed: whoever could change appcast.xml
+    could rewrite the notes or hide an update, and the app would believe it. Sparkle will not
+    start with that key set and SUVerifyUpdateBeforeExtraction missing."""
+    plist = info()
+    assert plist["SURequireSignedFeed"] is True
+    assert plist["SUVerifyUpdateBeforeExtraction"] is True
 
 
-def test_nothing_is_tagged_before_the_appcast_is_signed():
-    release = read("scripts", "release.sh")
-    signed = release.index('die "appcast.xml carries no EdDSA signature"')
-    assert release.index("generate_appcast\"") < signed < release.index('git tag -a "$TAG"')
-    assert signed < release.index('if [ "$DRY_RUN" = 1 ]; then\n    echo\n'), "a dry run writes and checks it too"
+# What a release does with these, and what it refuses, is tests/test_release.py's to show: it
+# runs scripts/release.sh.
 
 
 def test_the_tools_that_are_handed_the_key_are_pinned_by_hash():
     pins = json.loads(read("macos", "Package.resolved"))["pins"]
     version = next(pin["state"]["version"] for pin in pins if pin["identity"] == "sparkle")
-    fetch = read("scripts", "fetch_sparkle_tools.sh")
-    assert re.search(rf'^\s*{re.escape(version)}\) echo "[0-9a-f]{{64}}" ;;$', fetch, re.M), \
-        f"no pinned SHA-256 for Sparkle {version}, the version the app links"
-    assert "shasum -a 256 -c --status" in fetch and fetch.index("shasum -a 256") < fetch.index("tar -xJf"), \
-        "checked before anything is unpacked"
+    script = read("scripts", "sparkle_tools.sh")
+    for tool in ("generate_appcast", "generate_keys", "sign_update"):
+        assert re.search(rf'^\s*{re.escape(version)}:{tool}\)\s+echo "[0-9a-f]{{64}}" ;;$', script, re.M), \
+            f"no pinned SHA-256 for the {tool} of Sparkle {version}, the version the app links"
+    # that the script acts on them is tests/test_sparkle_tools.py's to show: it runs it
     package = read("macos", "Package.swift")
     assert "https://github.com/sparkle-project/Sparkle.git" in package
+    # The manifest's minimum is never above the pin: then every check here would read a pin
+    # the build could not use, and SwiftPM, left to itself, would move it during a release.
+    least = re.search(r'sparkle-project/Sparkle\.git", from: "([0-9.]+)"', package).group(1)
+    assert tuple(map(int, least.split("."))) <= tuple(map(int, version.split("."))), \
+        f"macos/Package.swift asks for Sparkle {least} or later and macos/Package.resolved pins {version}"
+    build = read("scripts", "build_app.sh")
+    assert "swift build --only-use-versions-from-resolved-file" in build, "the build does not move the pin"
     assert "@executable_path/../Frameworks" in package, "where the app finds the framework it carries"
 
 
@@ -68,24 +71,66 @@ def test_sparkle_is_carried_checked_and_signed_inside_out():
     carried = build.index('cp -R "$SPARKLE_FW" "$APP/Contents/Frameworks/"')
     assert carried < build.index('scripts/check_min_macos.py "$APP"') < build.index('scripts/sign_app.sh "$APP"'), \
         "in the bundle before the macOS minimum is checked, and before anything is signed"
+    # The one place the app looks for the framework is the one it is copied to, or no build.
+    assert 'NEEDED="@executable_path/../Frameworks"' in build
+    assert '[ "$(rpaths)" = "$NEEDED" ] || {' in build and build.index('[ "$(rpaths)" = "$NEEDED" ]') < carried
     sign = read("scripts", "sign_app.sh")
-    order = [sign.index(part) for part in ("Downloader.xpc", "Installer.xpc", "Autoupdate", "Updater.app",
-                                           'sign "$FW"', 'sign "$APP"')]
-    assert order == sorted(order), "its helpers, then the framework, then the app"
-    assert "sign --preserve-metadata=entitlements" in sign, "the helpers keep the entitlements they ship with"
+    steps = [line.strip() for line in sign.splitlines() if line.startswith("sign ")]
+    sparkle = [step for step in steps if "$FW" in step]
+    assert sparkle == ['sign "$FW/Versions/B/XPCServices/Installer.xpc"',
+                       'sign --preserve-metadata=entitlements "$FW/Versions/B/XPCServices/Downloader.xpc"',
+                       'sign "$FW/Versions/B/Autoupdate"',
+                       'sign "$FW/Versions/B/Updater.app"',
+                       'sign "$FW"'], "Sparkle's own recipe: only the downloader keeps what it ships with"
+    assert steps.index('sign "$FW"') < steps.index('sign "$APP"'), "the framework before the app that carries it"
+    assert "--deep" not in " ".join(steps)
 
 
-def test_the_menu_offers_a_check_and_a_development_run_updates_nothing():
+def test_sparkles_license_goes_wherever_its_framework_goes():
+    """Its license asks that every copy carry its notice. The app only named it."""
+    build = read("scripts", "build_app.sh")
+    copied = build.index('cp "$SPARKLE_LICENSE" "$APP/Contents/Resources/LICENSE-Sparkle"')
+    refused = build.index('[ -s "$SPARKLE_LICENSE" ] || {')
+    assert refused < copied < build.index('scripts/sign_app.sh "$APP"'), "there, or no build; and sealed by the signature"
+    assert "LICENSE-Sparkle" in read("NOTICE")
+    built = ROOT / "dist" / "agent-grange-viz.app" / "Contents"
+    if (built / "Frameworks" / "Sparkle.framework").is_dir():          # an app was built here: look at it
+        assert "Permission is hereby granted" in (built / "Resources" / "LICENSE-Sparkle").read_text()
+
+
+def test_the_menu_offers_a_check_and_only_a_copy_with_a_feed_updates_itself():
     swift = read("macos", "Sources", "AgentGrangeViz", "AppDelegate.swift")
     assert 'NSMenuItem(title: "Check for Updates…"' in swift
     assert "#selector(SPUStandardUpdaterController.checkForUpdates(_:))" in swift and "check.target = updater" in swift
+    assert 'updatesItself: Bool { Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil }' in swift
     setup = swift[swift.index("private func setupUpdater()"):]
-    assert setup.index("guard !isDevelopmentRun else { return }") < setup.index("SPUStandardUpdaterController(")
+    assert setup.index("guard updatesItself else { return }") < setup.index("SPUStandardUpdaterController(")
     assert swift.index("setupUpdater()") < swift.index("buildMenus()"), "the item is built with its target in hand"
 
 
-def test_what_the_tools_leave_behind_is_not_committed():
-    assert ".sparkle-tools/" in read(".gitignore").split()
+def test_a_local_build_is_made_without_the_feed():
+    """It has the installed copy's bundle id, and so its Sparkle preferences. With automatic
+    installs on, a build from a branch would be replaced by the published app as it quit."""
+    build = read("scripts", "build_app.sh")
+    local = build[build.index('if [ "${CODESIGN_IDENTITY:--}" = "-" ]; then'):]
+    local = local[:local.index("\nfi\n")]
+    assert '/usr/libexec/PlistBuddy -c "Delete :SUFeedURL" "$APP/Contents/Info.plist"' in local
+    written = build.index('sed "s/__VERSION__/$VERSION/g" macos/Info.plist > "$APP/Contents/Info.plist"')
+    assert written < build.index(local) < build.index('scripts/sign_app.sh "$APP"'), "after it is written, before it is signed"
+    assert "SUFeedURL" in read("macos", "Info.plist"), "a release, built from the same file, keeps it"
+
+
+def test_closing_the_viewers_window_quits_whatever_else_is_open():
+    """Sparkle's update window is a window too. With it open, closing the viewer's window left
+    the app running with nothing to show: the app only quit after its last window. (Seen on a
+    scratch copy offered a made-up update.)"""
+    swift = read("macos", "Sources", "AgentGrangeViz", "AppDelegate.swift")
+    assert "w.delegate = self" in swift, "the app hears of its window closing"
+    closing = swift[swift.index("func windowWillClose("):]
+    closing = closing[:closing.index("\n    }\n")]
+    assert "=== window" in closing, "the viewer's window, not one of Sparkle's"
+    assert "NSApp.terminate(nil)" in closing
+    assert "w.isReleasedWhenClosed = false" in swift, "nor is the window freed while the app still holds it"
 
 
 def test_the_readme_says_what_the_update_check_is():

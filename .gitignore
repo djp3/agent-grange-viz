@@ -16,4 +16,3 @@ build/
 dist/
 macos/.build/
 macos/Resources/AppIcon.icns
-.sparkle-tools/
