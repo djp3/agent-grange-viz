@@ -28,7 +28,7 @@
 #     NOTARY_KEY_ID / NOTARY_ISSUER_ID / NOTARY_KEY_FILE (an App Store Connect API key)
 #   - the Sparkle key, in the login keychain under the account agent-grange-viz. Its public
 #     half is SUPublicEDKey in macos/Info.plist:
-#       .sparkle-tools/<ver>/bin/generate_keys --account agent-grange-viz -p   # prints that public key
+#       "$(scripts/sparkle_tools.sh)"/bin/generate_keys --account agent-grange-viz -p   # prints that public key
 #     Apps already installed accept updates signed with this key only, so keep a copy of it
 #     somewhere safe:  generate_keys --account agent-grange-viz -x <file>  exports it.
 #     SPARKLE_PRIVATE_KEY_FILE=<file> signs with an exported key instead of the keychain's.
@@ -90,7 +90,7 @@ $DIRTY"
         NOTARY_ARGS=(--keychain-profile "$NOTARY_PROFILE")
     fi
 fi
-TOOLS=$(scripts/fetch_sparkle_tools.sh)
+TOOLS=$(scripts/sparkle_tools.sh)
 if [ -n "${SPARKLE_PRIVATE_KEY_FILE:-}" ]; then
     SPARKLE_KEY_ARGS=(--ed-key-file "$SPARKLE_PRIVATE_KEY_FILE")
 else

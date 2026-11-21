@@ -1,7 +1,8 @@
 # Copyright (C) 2026 Don Patterson
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""scripts/fetch_sparkle_tools.sh hands a release the tools it gives the update key to. These
-run it, in a scratch checkout with a curl that reaches nothing, and see what it refuses."""
+"""scripts/sparkle_tools.sh hands a release the tools it gives the update key to: the ones
+SwiftPM already fetched with Sparkle's framework, each checked against its own pinned hash.
+These run it, in a scratch checkout with a swift of their own, and see what it refuses."""
 import json
 import shutil
 import subprocess
@@ -11,19 +12,19 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-SCRIPT = ROOT / "scripts" / "fetch_sparkle_tools.sh"
+SCRIPT = ROOT / "scripts" / "sparkle_tools.sh"
 VERSION = "2.10.1"
 TOOLS = ("generate_appcast", "generate_keys", "sign_update")
-REAL = ROOT / ".sparkle-tools" / VERSION / "bin"         # there once a release, or a dry run, has fetched them
+ARTIFACT = Path("macos") / ".build" / "artifacts" / "sparkle" / "Sparkle"   # where SwiftPM unpacks Sparkle's package
+REAL = ROOT / ARTIFACT / "bin"                                               # there once the app has been built here
 
-CURL = """#!/bin/sh
-# A curl for the tests: it reaches nothing. It notes that it was called, and writes
-# $CURL_WRITES to the file -o names when there is something to write.
-echo "curl $*" >> "$CURL_LOG"
-out=""
-while [ $# -gt 0 ]; do [ "$1" = "-o" ] && out=$2; shift; done
-if [ -n "${CURL_WRITES:-}" ] && [ -n "$out" ]; then printf '%s' "$CURL_WRITES" > "$out"; exit 0; fi
-exit 22
+SWIFT = """#!/bin/sh
+# A swift for the tests: it resolves nothing over any network. It notes how it was called,
+# and when $SWIFT_BRINGS names a folder it copies that to where SwiftPM would unpack Sparkle.
+echo "$* (in $(basename "$PWD"))" >> "$SWIFT_LOG"
+if [ -n "${SWIFT_BRINGS:-}" ]; then
+    mkdir -p .build/artifacts/sparkle/Sparkle && cp -R "$SWIFT_BRINGS" .build/artifacts/sparkle/Sparkle/bin
+fi
 """
 
 
@@ -44,57 +45,90 @@ def checkout(tmp_path):
         f'        .package(url: "https://github.com/sparkle-project/Sparkle.git", from: "{VERSION}"),\n')
     (tmp_path / "bin").mkdir()
     shim(tmp_path / "bin" / "python3", f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
-    shim(tmp_path / "bin" / "curl", CURL)
+    shim(tmp_path / "bin" / "swift", SWIFT)
     return tmp_path
 
 
 def run(checkout: Path, **env) -> subprocess.CompletedProcess:
-    env = {"PATH": f"{checkout / 'bin'}:/usr/bin:/bin", "CURL_LOG": str(checkout / "curl.log"), **env}
+    env = {"PATH": f"{checkout / 'bin'}:/usr/bin:/bin", "SWIFT_LOG": str(checkout / "swift.log"), **env}
     return subprocess.run(["/bin/bash", str(checkout / "scripts" / SCRIPT.name)], capture_output=True, text=True, env=env)
 
 
-def place(checkout: Path, **contents) -> Path:
-    """Tools where an earlier fetch would have left them. A tool is the real one, when this
-    checkout has it, unless `contents` gives its bytes; None leaves it out."""
-    there = checkout / ".sparkle-tools" / VERSION / "bin"
-    there.mkdir(parents=True)
+def tools(folder: Path, **contents) -> Path:
+    """Tools in `folder`. A tool is the real one, when this checkout has been built, unless
+    `contents` gives its bytes; None leaves it out."""
+    folder.mkdir(parents=True)
     for tool in TOOLS:
         if tool in contents:
             if contents[tool] is not None:
-                (there / tool).write_bytes(contents[tool])
-                (there / tool).chmod(0o755)
+                (folder / tool).write_bytes(contents[tool])
+                (folder / tool).chmod(0o755)
         else:
-            shutil.copy(REAL / tool, there / tool)
-    return there
+            shutil.copy(REAL / tool, folder / tool)
+    return folder
 
 
-def called(checkout: Path) -> bool:
-    return (checkout / "curl.log").exists()
+def place(checkout: Path, **contents) -> Path:
+    """Tools where SwiftPM would have unpacked them."""
+    return tools(checkout / ARTIFACT / "bin", **contents)
+
+
+def resolved(checkout: Path) -> list:
+    log = checkout / "swift.log"
+    return log.read_text().splitlines() if log.exists() else []
 
 
 needs_the_real_tools = pytest.mark.skipif(not all((REAL / t).is_file() for t in TOOLS),
-                                          reason="Sparkle's tools are not in .sparkle-tools/ (no release was dry-run here)")
+                                          reason="Sparkle's tools are not under macos/.build/artifacts (the app was not built here)")
 FAKE = {tool: b"not Sparkle's " + tool.encode() for tool in TOOLS}
 
 
-# ---- every run checks every tool ------------------------------------------------------------------
+# ---- the tools SwiftPM already has ----------------------------------------------------------------
 @needs_the_real_tools
-def test_the_tools_as_sparkle_shipped_them_are_handed_back(checkout):
+def test_the_tools_swiftpm_fetched_are_handed_back_and_nothing_is_fetched(checkout):
     place(checkout)
     done = run(checkout)
     assert done.returncode == 0, done.stderr
-    assert Path(done.stdout.strip()) == (checkout / ".sparkle-tools" / VERSION).resolve()
-    assert not called(checkout), "they were there already: nothing is downloaded"
+    assert Path(done.stdout.strip()) == (checkout / ARTIFACT).resolve()
+    assert resolved(checkout) == [], "they were there: SwiftPM is not asked for anything"
 
 
+def test_nothing_is_downloaded_a_second_time():
+    """It used to fetch Sparkle's whole release (16 MB, 91 MB unpacked) for three tools that
+    SwiftPM had already put on disk, byte for byte."""
+    script = SCRIPT.read_text()
+    assert "curl" not in script and "tar " not in script and ".sparkle-tools" not in script
+    assert not (ROOT / "scripts" / "fetch_sparkle_tools.sh").exists()
+
+
+@needs_the_real_tools
+def test_a_checkout_never_built_has_its_packages_resolved_first(checkout):
+    """A release wants the tools in preflight, before it builds, when macos/.build may not
+    exist yet."""
+    brought = tools(checkout / "from-swiftpm")
+    done = run(checkout, SWIFT_BRINGS=str(brought))
+    assert done.returncode == 0, done.stderr
+    assert resolved(checkout) == ["package resolve (in macos)"]
+    assert Path(done.stdout.strip()) == (checkout / ARTIFACT).resolve()
+    assert "resolving the Swift packages" in done.stderr
+
+
+def test_when_resolving_brings_no_tools_it_says_to_delete_the_whole_cache(checkout):
+    """SwiftPM notes what it has downloaded. With only macos/.build/artifacts deleted it
+    believes the tools are still there, and resolving brings nothing back."""
+    done = run(checkout)
+    assert done.returncode == 1 and done.stdout == "" and resolved(checkout) == ["package resolve (in macos)"]
+    assert "left no Sparkle tools" in done.stderr and "Delete macos/.build (all of it" in done.stderr
+
+
+# ---- every run checks every tool ------------------------------------------------------------------
 def test_tools_that_are_not_sparkles_are_refused(checkout):
-    """.sparkle-tools/ is ignored by git, so the release's clean-tree check does not see it.
-    The script used to trust whatever was executable at bin/generate_appcast."""
+    """macos/.build/ is ignored by git, so the release's clean-tree check does not see it."""
     place(checkout, **FAKE)
     done = run(checkout)
     assert done.returncode == 1 and done.stdout == "", "no folder is handed to the release"
     assert f"bin/generate_appcast is not the generate_appcast of Sparkle {VERSION}" in done.stderr
-    assert "refusing to use it" in done.stderr and not called(checkout)
+    assert "refusing to use it" in done.stderr and resolved(checkout) == []
 
 
 @needs_the_real_tools
@@ -109,11 +143,9 @@ def test_one_tool_changed_among_the_real_ones_is_caught(checkout, changed):
 
 
 @needs_the_real_tools
-def test_what_an_unpacking_cut_short_left_behind_is_refused(checkout):
-    """The old script unpacked straight into place: stopped part-way it left a generate_appcast
-    that was there and executable, and every later run took it for the tools."""
+def test_half_a_tool_is_refused(checkout):
     half = (REAL / "generate_appcast").read_bytes()[:4096]
-    place(checkout, generate_appcast=half, sign_update=None)
+    place(checkout, generate_appcast=half)
     done = run(checkout)
     assert done.returncode == 1 and done.stdout == "" and "generate_appcast is not the generate_appcast" in done.stderr
 
@@ -122,23 +154,17 @@ def test_what_an_unpacking_cut_short_left_behind_is_refused(checkout):
 def test_a_tool_that_is_not_there_is_said_to_be_missing(checkout):
     place(checkout, sign_update=None)
     done = run(checkout)
-    assert done.returncode == 1 and "bin/sign_update is missing" in done.stderr and "delete" in done.stderr
+    assert done.returncode == 1 and "bin/sign_update is missing" in done.stderr and "delete macos/.build" in done.stderr
 
 
-# ---- the download ------------------------------------------------------------------------------------
-def test_a_download_that_is_not_the_pinned_file_is_not_unpacked(checkout):
-    done = run(checkout, CURL_WRITES="not the tarball")
-    assert called(checkout) and f"Sparkle-{VERSION}.tar.xz" in (checkout / "curl.log").read_text()
+@needs_the_real_tools
+def test_what_swiftpm_brings_is_checked_too(checkout):
+    """SwiftPM checks its download against Sparkle's manifest. This check does not rest on
+    that one."""
+    brought = tools(checkout / "from-swiftpm", generate_keys=b"not Sparkle's generate_keys")
+    done = run(checkout, SWIFT_BRINGS=str(brought))
     assert done.returncode == 1 and done.stdout == ""
-    assert "does not match the pinned SHA-256; refusing to unpack it" in done.stderr
-    assert not (checkout / ".sparkle-tools").exists() or not any((checkout / ".sparkle-tools").iterdir()), \
-        "nothing is left that a later run could take for tools"
-
-
-def test_a_download_that_fails_leaves_nothing_behind(checkout):
-    done = run(checkout)
-    assert done.returncode != 0 and done.stdout == "" and called(checkout)
-    assert not (checkout / ".sparkle-tools" / VERSION).exists()
+    assert f"bin/generate_keys is not the generate_keys of Sparkle {VERSION}" in done.stderr
 
 
 # ---- which version ------------------------------------------------------------------------------------
@@ -151,21 +177,24 @@ def test_when_the_pin_cannot_be_read_it_says_so_and_goes_by_the_manifest(checkou
     python3 that fails, the script used to end on that line, silently, before the fallback on
     the next line or the message after it."""
     broken_python(checkout)
+    place(checkout, **FAKE)
     done = run(checkout)
     assert "could not read Sparkle's version from macos/Package.resolved" in done.stderr
-    assert called(checkout) and f"Sparkle-{VERSION}.tar.xz" in (checkout / "curl.log").read_text(), \
-        "it went on, with the version macos/Package.swift names"
+    assert f"of Sparkle {VERSION}" in done.stderr, "it went on, with the version macos/Package.swift names"
 
 
 def test_when_no_version_can_be_found_it_says_so(checkout):
     broken_python(checkout)
     (checkout / "macos" / "Package.swift").write_text("// no Sparkle here\n")
     done = run(checkout)
-    assert done.returncode == 1 and done.stdout == "" and not called(checkout)
+    assert done.returncode == 1 and done.stdout == "" and resolved(checkout) == []
     assert "could not determine the Sparkle version" in done.stderr
 
 
-def test_a_version_with_no_pinned_hash_is_refused_before_anything_is_fetched(checkout):
-    done = run(checkout, SPARKLE_VERSION="2.11.0")
-    assert done.returncode == 1 and "no pinned SHA-256 for Sparkle 2.11.0" in done.stderr
-    assert not called(checkout)
+def test_a_version_whose_tools_are_not_pinned_is_refused_before_anything_is_resolved(checkout):
+    (checkout / "macos" / "Package.resolved").write_text(json.dumps(
+        {"pins": [{"identity": "sparkle", "state": {"version": "2.11.0"}}]}))
+    place(checkout, **FAKE)
+    done = run(checkout)
+    assert done.returncode == 1 and "no pinned SHA-256 for the tools of Sparkle 2.11.0" in done.stderr
+    assert resolved(checkout) == []

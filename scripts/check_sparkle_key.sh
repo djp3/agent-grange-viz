@@ -2,7 +2,7 @@
 # Copyright (C) 2026 Don Patterson
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Is the key a release would sign with the one that installed copies trust?
-#   scripts/check_sparkle_key.sh <tools>      # the folder scripts/fetch_sparkle_tools.sh prints
+#   scripts/check_sparkle_key.sh <tools>      # the folder scripts/sparkle_tools.sh prints
 #
 # scripts/release.sh asks this before it builds anything. The key is first used when the
 # appcast is written, which is after the build and after Apple's notary has had its minutes:

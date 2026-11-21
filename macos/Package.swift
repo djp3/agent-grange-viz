@@ -7,7 +7,7 @@
 // scripts/build_app.sh builds this and assembles dist/agent-grange-viz.app around it.
 //
 // Sparkle's version here is a minimum. The one that is linked is pinned in Package.resolved,
-// and scripts/fetch_sparkle_tools.sh holds the hash of that release's tools: raise the three
+// and scripts/sparkle_tools.sh holds the hashes of that release's tools: raise the three
 // together.
 import PackageDescription
 

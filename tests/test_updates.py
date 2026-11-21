@@ -65,10 +65,10 @@ def test_nothing_is_tagged_before_the_zip_and_the_feed_are_both_seen_to_be_signe
 def test_the_tools_that_are_handed_the_key_are_pinned_by_hash():
     pins = json.loads(read("macos", "Package.resolved"))["pins"]
     version = next(pin["state"]["version"] for pin in pins if pin["identity"] == "sparkle")
-    fetch = read("scripts", "fetch_sparkle_tools.sh")
-    for what in ("tarball", "generate_appcast", "generate_keys", "sign_update"):
-        assert re.search(rf'^\s*{re.escape(version)}:{what}\)\s+echo "[0-9a-f]{{64}}" ;;$', fetch, re.M), \
-            f"no pinned SHA-256 for the {what} of Sparkle {version}, the version the app links"
+    script = read("scripts", "sparkle_tools.sh")
+    for tool in ("generate_appcast", "generate_keys", "sign_update"):
+        assert re.search(rf'^\s*{re.escape(version)}:{tool}\)\s+echo "[0-9a-f]{{64}}" ;;$', script, re.M), \
+            f"no pinned SHA-256 for the {tool} of Sparkle {version}, the version the app links"
     # that the script acts on them is tests/test_sparkle_tools.py's to show: it runs it
     package = read("macos", "Package.swift")
     assert "https://github.com/sparkle-project/Sparkle.git" in package
@@ -112,10 +112,6 @@ def test_closing_the_viewers_window_quits_whatever_else_is_open():
     assert "=== window" in closing, "the viewer's window, not one of Sparkle's"
     assert "NSApp.terminate(nil)" in closing
     assert "w.isReleasedWhenClosed = false" in swift, "nor is the window freed while the app still holds it"
-
-
-def test_what_the_tools_leave_behind_is_not_committed():
-    assert ".sparkle-tools/" in read(".gitignore").split()
 
 
 def test_the_readme_says_what_the_update_check_is():
