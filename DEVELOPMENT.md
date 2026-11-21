@@ -25,7 +25,7 @@ only Python's standard library.
 | `docs/` | `openapi.yaml`, the specification of `GET /v1/mesh` and its companions; `data-sources.md`, the survey behind it; `screenshot.png`, for the README |
 | `macos/` | the SwiftPM package for the host app (`Package.swift`, `Sources/AgentGrangeViz`, `Info.plist`, the icon) |
 | `packaging/` | the PyInstaller spec for the Python side |
-| `scripts/` | `build_app.sh`, `sign_app.sh`, `release.sh`, `fetch_sparkle_tools.sh`, `check_appcast.py`, `locked_venv.sh`, `check_min_macos.py`, `render_icon.sh`, `make_icon.sh` |
+| `scripts/` | `build_app.sh`, `sign_app.sh`, `release.sh`, `fetch_sparkle_tools.sh`, `check_sparkle_key.sh`, `check_appcast.py`, `locked_venv.sh`, `check_min_macos.py`, `render_icon.sh`, `make_icon.sh` |
 | `release-notes/` | one file per release, written for people who use the app |
 | `tests/` | plain pytest; `standins.py` holds a stand-in grange and a stand-in Docker |
 | `VERSION` | the single source of the version number |
@@ -154,8 +154,11 @@ Sparkle and poll nothing.
 `DRY_RUN=1 scripts/release.sh` builds with the Developer ID, zips and writes the appcast into
 `dist/`, then stops: nothing is sent to Apple or GitHub, and nothing is tagged.
 
-The script refuses a working tree that is not clean, a tag that already exists, release
-notes that are missing, and an appcast in which the zip or the feed came out unsigned (the
+Before it builds anything, the script refuses a working tree that is not clean, a tag that
+already exists, release notes that are missing, and a Sparkle key that is missing from the
+keychain or is not the one in `Info.plist` (`scripts/check_sparkle_key.sh`; it asks for the
+key by this app's account, since a keychain can hold another project's). After the build it
+refuses an appcast in which the zip or the feed came out unsigned (the
 zip does when the key Sparkle's tool was given is not the one in `Info.plist`, the feed when
 the app does not ask for a signed one). The tag is made last and removed again if publishing
 fails, so a second run starts clean.

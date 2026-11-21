@@ -41,6 +41,8 @@
 #   git add VERSION release-notes && git commit -m "Release 0.2.0"
 #   scripts/release.sh
 set -euo pipefail
+# A key file named from where this was called must still be found once we have moved.
+case "${SPARKLE_PRIVATE_KEY_FILE:-}" in ""|/*) ;; *) SPARKLE_PRIVATE_KEY_FILE="$PWD/$SPARKLE_PRIVATE_KEY_FILE" ;; esac
 cd "$(dirname "$0")/.."
 
 VERSION=$(tr -d '[:space:]' < VERSION)
@@ -96,6 +98,9 @@ else
 fi
 echo "identity: ${IDENTITY_NAME:-$IDENTITY} ($IDENTITY)"
 echo "sparkle tools: $TOOLS"
+# The key is not used until the appcast is written, after the build and the notary. Look at
+# it now: a missing key, or one that is not the app's, should not cost a whole run to find.
+SPARKLE_ACCOUNT="$SPARKLE_ACCOUNT" scripts/check_sparkle_key.sh "$TOOLS" || die "the Sparkle key is not usable; nothing was built"
 
 step "locked packages"
 # The app is built from a new venv holding exactly requirements.lock, every file checked
