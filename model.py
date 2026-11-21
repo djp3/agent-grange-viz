@@ -197,7 +197,7 @@ class Snapshot:
     has_sidecar: bool = False            # the sidecar could be asked (through /v1/mesh, or Docker)
     demo: bool = False                   # every name and number is made up
     port: int = DEFAULT_PORT
-    clock: str = ""                      # for the top line: wall time, or the demo's place in its loop
+    loop: str = ""                       # the demo's place in its loop, for the top line; else nothing
     note: str = ""                       # one line a source wants shown, e.g. why Docker is unavailable
 
     @property

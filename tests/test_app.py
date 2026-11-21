@@ -5,6 +5,7 @@ freezes on the last picture when nothing answers."""
 from __future__ import annotations
 
 import logging
+import re
 
 import pytest
 
@@ -59,9 +60,9 @@ async def test_demo_keys_pause_speed_and_jump():
         assert source.speed == 4
         await pilot.press("minus")
         assert source.speed == 1
-        before = source.snapshot().clock
+        before = source.snapshot().loop
         await pilot.press("e")
-        assert source.snapshot().clock != before
+        assert source.snapshot().loop != before
 
 
 @drive
@@ -106,6 +107,33 @@ async def test_a_grange_that_refuses_everything_is_said_to_be_not_running():
         app.tick()
         await pilot.pause()
         assert "━" in text_of(app, "#grid") and "djp3" in text_of(app, "#head")
+
+
+TIME_OF_DAY = re.compile(r"\b\d{1,2}:\d\d(:\d\d)?\b")
+
+
+@drive
+async def test_the_top_line_shows_no_clock():
+    """The menu bar has one. The top line ends with what the grange says, and with nothing at
+    all when the grange cannot be asked."""
+    for snap in (today([healthy("alice")]), not_running([healthy("alice")]),
+                 today(reachable=False, unreachable_for=12.0)):
+        app = main.GrangeViz(Scripted(snap), live=False)
+        async with app.run_test(size=(170, 46)) as pilot:
+            await pilot.pause()
+            head = text_of(app, "#head")
+            assert not TIME_OF_DAY.search(head), head
+            assert head == head.rstrip(), "and no gap is left where it was"
+    assert not hasattr(Snapshot(), "clock"), "a source has nowhere to put one"
+
+
+@drive
+async def test_the_demo_still_says_where_it_is_in_its_loop():
+    app = main.GrangeViz(DemoSource(start=100.0), live=False)
+    async with app.run_test(size=(170, 46)) as pilot:
+        await pilot.pause()
+        head = text_of(app, "#head")
+        assert "1m40 into the loop" in head and "▶ 1×" in head
 
 
 @drive
