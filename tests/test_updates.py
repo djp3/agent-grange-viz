@@ -8,7 +8,11 @@ import base64
 import json
 import plistlib
 import re
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 REPO = "djp3/agent-grange-viz"
@@ -142,3 +146,63 @@ def test_the_readme_says_what_the_update_check_is():
     assert "does not update itself" not in readme
     development = " ".join(read("DEVELOPMENT.md").split())
     assert "generate_keys --account agent-grange-viz" in development and "there is no Sparkle" not in development
+
+
+# ---- the one place the app looks for its frameworks ---------------------------------------------
+NEEDED = "@executable_path/../Frameworks"
+
+
+def rpath_step() -> str:
+    """build_app.sh's own lines that keep the one rpath, from rpaths() to the check after it."""
+    build = read("scripts", "build_app.sh").splitlines()
+    first = next(i for i, line in enumerate(build) if line.startswith("rpaths() {"))
+    last = next(i for i, line in enumerate(build) if line.startswith('[ "$(rpaths)" = "$NEEDED" ]'))
+    return "\n".join(build[first:last + 1])
+
+
+def executable(tmp_path, *rpaths: str) -> Path:
+    """A tiny program that looks for its libraries in `rpaths`."""
+    if not shutil.which("cc"):
+        pytest.skip("no C compiler to make an executable with rpaths")
+    exe = tmp_path / "exe"
+    subprocess.run(["cc", "-x", "c", "-", "-o", str(exe), *[f"-Wl,-rpath,{rp}" for rp in rpaths]],
+                   input=b"int main(void){return 0;}\n", check=True)
+    return exe
+
+
+def keep_one_rpath(exe: Path) -> subprocess.CompletedProcess:
+    script = f'set -euo pipefail\nEXE="{exe}"\nNEEDED="{NEEDED}"\n{rpath_step()}\n'
+    return subprocess.run(["/bin/bash", "-c", script], capture_output=True, text=True)
+
+
+def rpaths_of(exe: Path) -> list:
+    lines = subprocess.run(["otool", "-l", str(exe)], capture_output=True, text=True, check=True).stdout.splitlines()
+    return [lines[i + 2].split("path ", 1)[1].rsplit(" (offset", 1)[0]
+            for i, line in enumerate(lines) if line.strip() == "cmd LC_RPATH"]
+
+
+def test_an_rpath_with_a_space_in_it_is_taken_out_whole(tmp_path):
+    """otool prints "path /tmp/My Checkout/... (offset 12)". awk's $2 was "/tmp/My", which
+    install_name_tool could not find, and the build stopped: a checkout in a folder with a
+    space in its name could not be built, once SwiftPM records an absolute rpath."""
+    spaced = str(tmp_path / "My Checkout" / "macos" / ".build" / "release")
+    exe = executable(tmp_path, "@loader_path", spaced, NEEDED)
+    assert spaced in rpaths_of(exe)
+    done = keep_one_rpath(exe)
+    assert done.returncode == 0, done.stderr
+    assert rpaths_of(exe) == [NEEDED]
+
+
+def test_the_usual_two_rpaths_come_down_to_the_one(tmp_path):
+    exe = executable(tmp_path, "@loader_path", NEEDED)
+    done = keep_one_rpath(exe)
+    assert done.returncode == 0, done.stderr
+    assert rpaths_of(exe) == [NEEDED]
+
+
+def test_without_the_rpath_it_needs_the_build_stops_and_says_where_it_looked(tmp_path):
+    spaced = str(tmp_path / "My Checkout")
+    exe = executable(tmp_path, "@loader_path", spaced)
+    done = keep_one_rpath(exe)
+    assert done.returncode == 1
+    assert f"must look for its frameworks in {NEEDED} alone" in done.stderr
