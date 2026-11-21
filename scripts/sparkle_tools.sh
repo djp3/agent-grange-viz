@@ -65,7 +65,7 @@ where() {
 DIR=$(where)
 if [ -z "$DIR" ]; then
     echo "Sparkle's tools are not under macos/.build/artifacts yet: resolving the Swift packages" >&2
-    (cd macos && swift package resolve >&2)
+    (cd macos && swift package --only-use-versions-from-resolved-file resolve >&2)   # the pinned versions, or fail
     DIR=$(where)
 fi
 # SwiftPM keeps its own note of what it has downloaded. With that folder deleted by hand it

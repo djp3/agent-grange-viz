@@ -39,6 +39,10 @@ while [ $# -gt 0 ]; do [ "$1" = "-o" ] && out=$2; shift; done
 cp "$APPCAST" "$out"
 """
 SIGN_UPDATE = NOTES_A_CALL.format(name="sign_update") + "exit ${VERIFIES:-0}\n"
+# scripts/sparkle_tools.sh refuses on its $TOOLS_REFUSED_AT'th call, when that is set.
+TOOLS_OR_NOT = """n=$(grep -c '^sparkle_tools' "$CALLS")
+if [ "$n" = "${TOOLS_REFUSED_AT:-}" ]; then echo "refusing to use it" >&2; exit 1; fi
+"""
 
 
 class Release:
@@ -53,7 +57,8 @@ class Release:
         (root / "VERSION").write_text(VERSION + "\n")
         (root / "release-notes").mkdir()
         (root / "release-notes" / f"{VERSION}.md").write_text("A made-up release.\n\n- one thing\n")
-        shim(root / "scripts" / "sparkle_tools.sh", NOTES_A_CALL.format(name="sparkle_tools") + f'echo "{root}/tools"\n')
+        shim(root / "scripts" / "sparkle_tools.sh", NOTES_A_CALL.format(name="sparkle_tools") + TOOLS_OR_NOT
+             + f'echo "{root}/tools"\n')
         shim(root / "scripts" / "locked_venv.sh", NOTES_A_CALL.format(name="locked_venv") + "echo /nowhere/python\n")
         shim(root / "scripts" / "build_app.sh", BUILD)
         shim(root / "tools" / "bin" / "generate_keys", GENERATE_KEYS)
@@ -109,6 +114,18 @@ def test_a_release_tags_and_publishes_the_zip_and_the_appcast_together(release):
                                            "xcrun stapler staple", "generate_appcast", "sign_update --verify",
                                            f"git tag -a v{VERSION}", "gh release create")]
     assert order == sorted(order), release.calls
+
+
+def test_the_tools_are_checked_again_after_the_build_before_they_are_given_the_key(release):
+    """The build has SwiftPM at its packages, which is where the tools lie."""
+    release.run()
+    asked = [i for i, call in enumerate(release.calls) if call.startswith("sparkle_tools")]
+    assert len(asked) == 2
+    assert asked[0] < release.at("build_app") < asked[1] < release.at("generate_appcast")
+    again = Release(release.where / "again")
+    done = again.run(TOOLS_REFUSED_AT="2")
+    assert done.returncode != 0 and "refusing to use it" in done.stderr
+    assert again.called("build_app") and not again.called("generate_appcast") and not again.called("git tag")
 
 
 def test_the_appcast_is_written_for_this_release_with_the_notes_inside_and_this_apps_key(release):
@@ -190,7 +207,6 @@ def test_without_notes_or_from_a_dirty_tree_nothing_is_built(release):
 
 
 def test_when_the_tools_cannot_be_had_nothing_is_built(release):
-    shim(release.root / "scripts" / "sparkle_tools.sh", "#!/bin/sh\necho 'refusing to use it' >&2\nexit 1\n")
-    done = release.run()
+    done = release.run(TOOLS_REFUSED_AT="1")
     assert done.returncode != 0 and "refusing to use it" in done.stderr
     assert not release.called("build_app") and release.nothing_left_this_mac()

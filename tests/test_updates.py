@@ -56,6 +56,13 @@ def test_the_tools_that_are_handed_the_key_are_pinned_by_hash():
     # that the script acts on them is tests/test_sparkle_tools.py's to show: it runs it
     package = read("macos", "Package.swift")
     assert "https://github.com/sparkle-project/Sparkle.git" in package
+    # The manifest's minimum is never above the pin: then every check here would read a pin
+    # the build could not use, and SwiftPM, left to itself, would move it during a release.
+    least = re.search(r'sparkle-project/Sparkle\.git", from: "([0-9.]+)"', package).group(1)
+    assert tuple(map(int, least.split("."))) <= tuple(map(int, version.split("."))), \
+        f"macos/Package.swift asks for Sparkle {least} or later and macos/Package.resolved pins {version}"
+    build = read("scripts", "build_app.sh")
+    assert "swift build --only-use-versions-from-resolved-file" in build, "the build does not move the pin"
     assert "@executable_path/../Frameworks" in package, "where the app finds the framework it carries"
 
 

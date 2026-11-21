@@ -99,7 +99,11 @@ checks for updates, and **Check for Updates…** stays greyed out.
 
 Sparkle is named in three places, raised together: the minimum in `macos/Package.swift`, the
 version that is linked in `macos/Package.resolved`, and the SHA-256 of that release's tools
-in `scripts/sparkle_tools.sh`.
+in `scripts/sparkle_tools.sh`. The build holds SwiftPM to `Package.resolved`
+(`--only-use-versions-from-resolved-file`): a minimum raised without the pin stops the build,
+where SwiftPM left to itself would move the pin and rewrite the file. To raise Sparkle, run
+`swift package update sparkle` in `macos/`, commit the new `Package.resolved`, and add the
+new tools' hashes.
 
 ## Releasing
 

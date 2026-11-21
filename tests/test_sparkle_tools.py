@@ -19,6 +19,7 @@ VERSION = "2.10.1"
 TOOLS = ("generate_appcast", "generate_keys", "sign_update")
 ARTIFACT = Path("macos") / ".build" / "artifacts" / "sparkle" / "Sparkle"   # where SwiftPM unpacks Sparkle's package
 REAL = ROOT / ARTIFACT / "bin"                                               # there once the app has been built here
+RESOLVE = "package --only-use-versions-from-resolved-file resolve (in macos)"
 
 SWIFT = """#!/bin/sh
 # A swift for the tests: it resolves nothing over any network. It notes how it was called,
@@ -104,7 +105,7 @@ def test_a_checkout_never_built_has_its_packages_resolved_first(checkout):
     brought = tools(checkout / "from-swiftpm")
     done = run(checkout, SWIFT_BRINGS=str(brought))
     assert done.returncode == 0, done.stderr
-    assert resolved(checkout) == ["package resolve (in macos)"]
+    assert resolved(checkout) == [RESOLVE], "held to the pinned versions: it does not move them"
     assert Path(done.stdout.strip()) == (checkout / ARTIFACT).resolve()
     assert "resolving the Swift packages" in done.stderr
 
@@ -113,7 +114,7 @@ def test_when_resolving_brings_no_tools_it_says_to_delete_the_whole_cache(checko
     """SwiftPM notes what it has downloaded. With only macos/.build/artifacts deleted it
     believes the tools are still there, and resolving brings nothing back."""
     done = run(checkout)
-    assert done.returncode == 1 and done.stdout == "" and resolved(checkout) == ["package resolve (in macos)"]
+    assert done.returncode == 1 and done.stdout == "" and resolved(checkout) == [RESOLVE]
     assert "left no Sparkle tools" in done.stderr and "Delete macos/.build (all of it" in done.stderr
 
 

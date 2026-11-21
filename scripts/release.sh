@@ -113,6 +113,9 @@ step "build"
 # ship an older build of it. A dry run may reuse it.
 [ "$DRY_RUN" = 1 ] || export SKIP_PYTHON=0
 PYTHON="$PYTHON" CODESIGN_IDENTITY="$IDENTITY" scripts/build_app.sh
+# The tools were checked in preflight, and the build has had SwiftPM at its packages since.
+# They are about to be handed the key: check them again, where they lie now.
+TOOLS=$(scripts/sparkle_tools.sh)
 
 if [ "$DRY_RUN" = 1 ]; then
     step "notarize: skipped (dry run)"

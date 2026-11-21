@@ -55,7 +55,10 @@ fi
 step "host app: swift build"
 BIN=macos/.build/release/AgentGrangeViz
 rm -f "$BIN"                                   # so an existing binary can only come from this build
-( cd macos && swift build -c release --product AgentGrangeViz 2>&1 | grep -E "error|warning: unre|Build complete"
+# Held to Package.resolved: left to itself SwiftPM moves a pin that the manifest has outgrown
+# and rewrites the file, mid-build, and the app would link a version no commit names.
+( cd macos && swift build --only-use-versions-from-resolved-file -c release --product AgentGrangeViz 2>&1 \
+    | grep -E "error|warning: unre|Build complete"
   [ "${PIPESTATUS[0]}" -eq 0 ] )              # keep the compiler's verdict, not grep's
 [ -x "$BIN" ] || { echo "swift build did not produce $BIN" >&2; exit 1; }
 # Sparkle comes as a binary framework that SwiftPM downloads next to the build.
