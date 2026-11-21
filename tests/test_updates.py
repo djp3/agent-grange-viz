@@ -83,13 +83,26 @@ def test_sparkle_is_carried_checked_and_signed_inside_out():
     assert "--deep" not in " ".join(steps)
 
 
-def test_the_menu_offers_a_check_and_a_development_run_updates_nothing():
+def test_the_menu_offers_a_check_and_only_a_copy_with_a_feed_updates_itself():
     swift = read("macos", "Sources", "AgentGrangeViz", "AppDelegate.swift")
     assert 'NSMenuItem(title: "Check for Updates…"' in swift
     assert "#selector(SPUStandardUpdaterController.checkForUpdates(_:))" in swift and "check.target = updater" in swift
+    assert 'updatesItself: Bool { Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil }' in swift
     setup = swift[swift.index("private func setupUpdater()"):]
-    assert setup.index("guard !isDevelopmentRun else { return }") < setup.index("SPUStandardUpdaterController(")
+    assert setup.index("guard updatesItself else { return }") < setup.index("SPUStandardUpdaterController(")
     assert swift.index("setupUpdater()") < swift.index("buildMenus()"), "the item is built with its target in hand"
+
+
+def test_a_local_build_is_made_without_the_feed():
+    """It has the installed copy's bundle id, and so its Sparkle preferences. With automatic
+    installs on, a build from a branch would be replaced by the published app as it quit."""
+    build = read("scripts", "build_app.sh")
+    local = build[build.index('if [ "${CODESIGN_IDENTITY:--}" = "-" ]; then'):]
+    local = local[:local.index("\nfi\n")]
+    assert '/usr/libexec/PlistBuddy -c "Delete :SUFeedURL" "$APP/Contents/Info.plist"' in local
+    written = build.index('sed "s/__VERSION__/$VERSION/g" macos/Info.plist > "$APP/Contents/Info.plist"')
+    assert written < build.index(local) < build.index('scripts/sign_app.sh "$APP"'), "after it is written, before it is signed"
+    assert "SUFeedURL" in read("macos", "Info.plist"), "a release, built from the same file, keeps it"
 
 
 def test_closing_the_viewers_window_quits_whatever_else_is_open():

@@ -106,10 +106,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Loca
         DispatchQueue.main.async { NSApp.terminate(nil) }
     }
 
-    /// Only the assembled app updates itself: a `swift run` has no Info.plist, so no feed
-    /// and no key to check an update against.
+    /// Only a copy that carries a feed updates itself, and only a release does. A `swift run`
+    /// has no Info.plist at all, and scripts/build_app.sh leaves the feed out of a local build.
+    /// With it, a build made from a branch would poll the releases, and where automatic
+    /// installs are on (a preference kept by bundle id, so shared with the installed copy) it
+    /// would be replaced by the published app as it quit.
+    private var updatesItself: Bool { Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil }
+
     private func setupUpdater() {
-        guard !isDevelopmentRun else { return }
+        guard updatesItself else { return }
         updater = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
     }
 
@@ -254,7 +259,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Loca
         appMenu.addItem(withTitle: "About agent-grange-viz",
                         action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
-        // With no updater (a development run) the item has no target and stays greyed out.
+        // With no updater (a `swift run`, a local build) the item has no target and stays greyed out.
         let check = NSMenuItem(title: "Check for Updates…",
                                action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)), keyEquivalent: "")
         check.target = updater

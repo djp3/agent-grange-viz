@@ -94,8 +94,15 @@ needs `rsvg-convert`), and a build only checks that the rendering is current.
 
 During development `swift run` in `macos/` starts the window alone, and
 `AGENT_GRANGE_VIZ_CORE=<an executable>` points it at any viewer to run inside. The assembled
-app ignores that variable. A `swift run` has no `Info.plist`, so no feed and no key: it never
-checks for updates, and **Check for Updates…** stays greyed out.
+app ignores that variable.
+
+Only a release updates itself. A `swift run` has no `Info.plist`, and `scripts/build_app.sh`
+leaves the feed out of a build it signs ad-hoc, so neither starts Sparkle and **Check for
+Updates…** stays greyed out in both. A local build has the installed copy's bundle id, and
+with it that copy's Sparkle preferences: carrying the feed, a build from a branch would poll
+the releases and, with automatic installs on, be replaced by the published app as it quit.
+A build signed with a Developer ID (`CODESIGN_IDENTITY=…`, or a dry run of a release) keeps
+the feed.
 
 Sparkle is named in three places, raised together: the minimum in `macos/Package.swift`, the
 version that is linked in `macos/Package.resolved`, and the SHA-256 of that release's tools

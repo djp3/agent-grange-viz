@@ -15,8 +15,9 @@
 # The version comes from VERSION and is used for both CFBundleShortVersionString and
 # CFBundleVersion (Sparkle compares the latter; dotted numbers compare naturally).
 #
-# By itself this builds an app for the Mac it is built on. scripts/release.sh builds the one
-# that leaves it: signed with a Developer ID, notarized, and published where Sparkle looks.
+# By itself this builds an app for the Mac it is built on, which does not update itself.
+# scripts/release.sh builds the one that leaves it: signed with a Developer ID, notarized,
+# and published where Sparkle looks.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -93,6 +94,14 @@ cp "$ICNS" "$APP/Contents/Resources/AppIcon.icns"
 # so there are no credits to carry beside them.
 cp LICENSE NOTICE "$APP/Contents/Resources/"
 sed "s/__VERSION__/$VERSION/g" macos/Info.plist > "$APP/Contents/Info.plist"
+# Only a build signed with a Developer ID, which is what a release is, looks for updates. A
+# local build is made without the feed: it has the installed copy's bundle id, and so its
+# Sparkle preferences, and with automatic installs on it would be replaced by the published
+# app as it quit. The app starts no updater without a feed (AppDelegate.updatesItself).
+if [ "${CODESIGN_IDENTITY:--}" = "-" ]; then
+    /usr/libexec/PlistBuddy -c "Delete :SUFeedURL" "$APP/Contents/Info.plist"
+    echo "a local build: it carries no update feed, and will not look for updates"
+fi
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
 step "macOS minimum"
