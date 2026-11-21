@@ -71,6 +71,9 @@ def test_sparkle_is_carried_checked_and_signed_inside_out():
     carried = build.index('cp -R "$SPARKLE_FW" "$APP/Contents/Frameworks/"')
     assert carried < build.index('scripts/check_min_macos.py "$APP"') < build.index('scripts/sign_app.sh "$APP"'), \
         "in the bundle before the macOS minimum is checked, and before anything is signed"
+    # The one place the app looks for the framework is the one it is copied to, or no build.
+    assert 'NEEDED="@executable_path/../Frameworks"' in build
+    assert '[ "$(rpaths)" = "$NEEDED" ] || {' in build and build.index('[ "$(rpaths)" = "$NEEDED" ]') < carried
     sign = read("scripts", "sign_app.sh")
     steps = [line.strip() for line in sign.splitlines() if line.startswith("sign ")]
     sparkle = [step for step in steps if "$FW" in step]
