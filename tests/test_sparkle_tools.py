@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from sparkle_standins import shim
+
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "scripts" / "sparkle_tools.sh"
 VERSION = "2.10.1"
@@ -28,11 +30,6 @@ fi
 """
 
 
-def shim(path: Path, text: str) -> None:
-    path.write_text(text)
-    path.chmod(0o755)
-
-
 @pytest.fixture
 def checkout(tmp_path):
     """As much of a checkout as the script reads: itself, and the pin in macos/."""
@@ -43,7 +40,6 @@ def checkout(tmp_path):
         {"pins": [{"identity": "sparkle", "state": {"version": VERSION}}]}))
     (tmp_path / "macos" / "Package.swift").write_text(
         f'        .package(url: "https://github.com/sparkle-project/Sparkle.git", from: "{VERSION}"),\n')
-    (tmp_path / "bin").mkdir()
     shim(tmp_path / "bin" / "python3", f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
     shim(tmp_path / "bin" / "swift", SWIFT)
     return tmp_path

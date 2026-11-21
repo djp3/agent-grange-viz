@@ -10,36 +10,15 @@ from pathlib import Path
 
 import pytest
 
+from sparkle_standins import appcast
+
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "scripts" / "check_appcast.py"
 BY_SPARKLE = ROOT / "tests" / "data" / "appcast_signed_by_sparkle.xml"
-SIGNATURE = "hKCB3wzZctOg9isMgUzf4m8b3jGOw/B9UIjT+m92mP1SaproXMd/bntCqfIk8yU9UGeQXwNA9XcK2ztR29QgCA=="
 
 spec = importlib.util.spec_from_file_location("check_appcast", SCRIPT)
 check_appcast = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(check_appcast)
-
-
-def appcast(zip_signed: bool = True, feed_signed: bool = True, notes: bool = True, covers: int = 0) -> bytes:
-    """A made-up appcast, as generate_appcast lays one out. `covers` is added to the length
-    the feed's signature claims: anything but 0 is a file changed after it was signed."""
-    signature = f' sparkle:edSignature="{SIGNATURE}"' if zip_signed else ""
-    description = ('<description sparkle:format="markdown"><![CDATA[A made-up release.\n\n- one thing\n]]></description>'
-                   if notes else "")
-    body = (f'<?xml version="1.0" standalone="yes"?>'
-            f'<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">\n'
-            f'    <channel>\n        <title>agent-grange-viz</title>\n        <item>\n'
-            f'            <title>9.9.9</title>\n'
-            f'            <sparkle:version>9.9.9</sparkle:version>\n'
-            f'            <sparkle:shortVersionString>9.9.9</sparkle:shortVersionString>\n'
-            f'            <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>\n'
-            f'            {description}\n'
-            f'            <enclosure url="https://example.invalid/agent-grange-viz-9.9.9.zip" length="18590525" '
-            f'type="application/octet-stream"{signature}/>\n'
-            f'        </item>\n    </channel>\n</rss>').encode()
-    if feed_signed:
-        body += f"<!-- sparkle-signatures:\nedSignature: {SIGNATURE}\nlength: {len(body) + covers}\n-->\n".encode()
-    return body
 
 
 def run(tmp_path, data: bytes) -> subprocess.CompletedProcess:

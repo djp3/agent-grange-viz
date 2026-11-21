@@ -10,19 +10,13 @@ from pathlib import Path
 
 import pytest
 
+from sparkle_standins import GENERATE_KEYS, shim
+
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "scripts" / "check_sparkle_key.sh"
 with open(ROOT / "macos" / "Info.plist", "rb") as _f:
     THE_APPS_KEY = plistlib.load(_f)["SUPublicEDKey"]
 ANOTHER_KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="        # made up: thirty-two zero bytes
-
-GENERATE_KEYS = """#!/bin/sh
-# A generate_keys for the tests: it notes how it was asked, and answers what it was told to.
-echo "$*" >> "$ASKED"
-[ -n "${ANSWER:-}" ] || { echo "ERROR: No existing signing key found!" >&2; exit 1; }
-echo "$ANSWER"
-"""
-
 
 @pytest.fixture
 def checkout(tmp_path):
@@ -30,10 +24,7 @@ def checkout(tmp_path):
     shutil.copy(SCRIPT, tmp_path / "scripts" / SCRIPT.name)
     (tmp_path / "macos").mkdir()
     shutil.copy(ROOT / "macos" / "Info.plist", tmp_path / "macos" / "Info.plist")
-    tool = tmp_path / "tools" / "bin" / "generate_keys"
-    tool.parent.mkdir(parents=True)
-    tool.write_text(GENERATE_KEYS)
-    tool.chmod(0o755)
+    shim(tmp_path / "tools" / "bin" / "generate_keys", GENERATE_KEYS)
     return tmp_path
 
 
@@ -81,11 +72,3 @@ def test_a_key_file_is_looked_for_and_the_keychain_left_alone(checkout):
     assert done.returncode == 0 and str(key) in done.stdout and asked(checkout) == []
     gone = run(checkout, SPARKLE_PRIVATE_KEY_FILE=str(checkout / "nowhere.key"))
     assert gone.returncode == 1 and "names no file that can be read" in gone.stderr and asked(checkout) == []
-
-
-def test_a_release_asks_before_it_builds_and_finds_a_key_file_named_from_where_it_was_called():
-    release = (ROOT / "scripts" / "release.sh").read_text()
-    checked = release.index('scripts/check_sparkle_key.sh "$TOOLS" || die')
-    assert checked < release.index('step "locked packages"') < release.index('step "build"')
-    made_absolute = release.index('SPARKLE_PRIVATE_KEY_FILE="$PWD/$SPARKLE_PRIVATE_KEY_FILE"')
-    assert made_absolute < release.index('cd "$(dirname "$0")/.."'), "before the script moves to the checkout"

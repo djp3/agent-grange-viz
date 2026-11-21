@@ -42,24 +42,8 @@ def test_the_app_takes_no_feed_that_is_not_signed():
     assert plist["SUVerifyUpdateBeforeExtraction"] is True
 
 
-def test_a_release_attaches_the_appcast_the_app_looks_for():
-    release = read("scripts", "release.sh")
-    assert f"REPO=${{GITHUB_REPO:-{REPO}}}" in release
-    assert "SPARKLE_ACCOUNT=${SPARKLE_ACCOUNT:-agent-grange-viz}" in release, "this app's key, nobody else's"
-    assert '--notes-file dist/release-notes.md "$ZIP" dist/appcast/appcast.xml' in release, \
-        "the zip and the appcast go up together: releases/latest/download/appcast.xml is the feed"
-    assert "--embed-release-notes" in release, "the notes travel inside the signed appcast"
-    assert '--download-url-prefix "https://github.com/$REPO/releases/download/$TAG/"' in release
-
-
-def test_nothing_is_tagged_before_the_zip_and_the_feed_are_both_seen_to_be_signed():
-    release = read("scripts", "release.sh")
-    shape = release.index("scripts/check_appcast.py dist/appcast/appcast.xml || die")
-    verified = release.index('"$TOOLS/bin/sign_update" --verify "${SPARKLE_KEY_ARGS[@]}" dist/appcast/appcast.xml')
-    assert release.index("generate_appcast\"") < shape < verified < release.index('git tag -a "$TAG"')
-    assert verified < release.index('if [ "$DRY_RUN" = 1 ]; then\n    echo\n'), "a dry run writes and checks it too"
-    assert 'grep -q "sparkle:edSignature"' not in release, \
-        "that finds the zip's signature and passes a feed that has none of its own"
+# What a release does with these, and what it refuses, is tests/test_release.py's to show: it
+# runs scripts/release.sh.
 
 
 def test_the_tools_that_are_handed_the_key_are_pinned_by_hash():
