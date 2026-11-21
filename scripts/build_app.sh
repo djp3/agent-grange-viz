@@ -17,7 +17,8 @@
 #
 # By itself this builds an app for the Mac it is built on, which does not update itself.
 # scripts/release.sh builds the one that leaves it: signed with a Developer ID, notarized,
-# and published where Sparkle looks.
+# and published where Sparkle looks. Only that one updates itself (WITH_UPDATES=1, which
+# release.sh sets): a copy built here by hand carries no feed, however it is signed.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -102,19 +103,27 @@ cp "$ICNS" "$APP/Contents/Resources/AppIcon.icns"
 # every copy of the app: the license asks for both. The icon is this project's own drawing,
 # so there are no credits to carry beside them.
 cp LICENSE NOTICE "$APP/Contents/Resources/"
-# Sparkle's framework is carried whole, and its license asks that every copy carry its
-# notice. The text comes with the package SwiftPM fetched, beside the framework.
-SPARKLE_LICENSE=$(find macos/.build/artifacts -maxdepth 3 -type f -name LICENSE -print -quit)
-[ -s "$SPARKLE_LICENSE" ] || { echo "Sparkle's LICENSE not found under macos/.build/artifacts: the app must not carry the framework without it" >&2; exit 1; }
-cp "$SPARKLE_LICENSE" "$APP/Contents/Resources/LICENSE-Sparkle"
+# The packages the Swift host links ask that their text go with every copy: Sparkle's, which
+# has with it the notices of what Sparkle itself carries, and SwiftTerm's. They are taken
+# from the very packages this copy was built from, so they are the licenses of the versions
+# inside it, and go beside the app's own: LICENSE-Sparkle, LICENSE-SwiftTerm. A build that
+# cannot find one stops here: the app must not carry either without it.
+for package in Sparkle SwiftTerm; do
+    [ -s "macos/.build/checkouts/$package/LICENSE" ] \
+        || { echo "no license text for $package under macos/.build/checkouts" >&2; exit 1; }
+    cp "macos/.build/checkouts/$package/LICENSE" "$APP/Contents/Resources/LICENSE-$package"
+done
 sed "s/__VERSION__/$VERSION/g" macos/Info.plist > "$APP/Contents/Info.plist"
-# Only a build signed with a Developer ID, which is what a release is, looks for updates. A
-# local build is made without the feed: it has the installed copy's bundle id, and so its
-# Sparkle preferences, and with automatic installs on it would be replaced by the published
-# app as it quit. The app starts no updater without a feed (AppDelegate.updatesItself).
-if [ "${CODESIGN_IDENTITY:--}" = "-" ]; then
-    /usr/libexec/PlistBuddy -c "Delete :SUFeedURL" "$APP/Contents/Info.plist"
-    echo "a local build: it carries no update feed, and will not look for updates"
+if [ "${WITH_UPDATES:-0}" != 1 ]; then
+    # A copy built to try a change is not to replace itself with the published release, which
+    # is what it would offer once a day with the feed in it: it has the installed copy's
+    # bundle id, and so its Sparkle preferences, and with automatic installs on it would be
+    # replaced as it quit. How it is signed does not tell the two apart (a copy can be built
+    # by hand with the Developer ID), so release.sh says which it is. Without a feed the app
+    # starts no updater at all (AppDelegate.updatesItself), and Check for Updates stays grey.
+    /usr/libexec/PlistBuddy -c "Delete :SUFeedURL" -c "Delete :SUEnableAutomaticChecks" \
+        -c "Delete :SUScheduledCheckInterval" "$APP/Contents/Info.plist"
+    echo "no update feed in this copy: it is not a release (WITH_UPDATES=1 makes one that updates itself)"
 fi
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
