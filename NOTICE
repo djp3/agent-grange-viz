@@ -23,5 +23,6 @@ What that license covers, and what it does not:
     and icon-small.svg) and has nothing of anybody else's in it.
 
   - Other people's programs that the app carries inside it are not (Python, Textual, Rich,
-    SwiftTerm, Sparkle and the rest). Each remains under its own license. Sparkle's is the
-    file LICENSE-Sparkle, beside this one in the app.
+    SwiftTerm, Sparkle and the rest). Each remains under its own license. The texts of
+    Sparkle's and SwiftTerm's are in the app, beside its own: LICENSE-Sparkle and
+    LICENSE-SwiftTerm in Contents/Resources.

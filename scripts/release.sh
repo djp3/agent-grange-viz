@@ -114,7 +114,8 @@ step "build"
 # A release always rebuilds the Python side: SKIP_PYTHON=1 left over in the shell must not
 # ship an older build of it. A dry run may reuse it.
 [ "$DRY_RUN" = 1 ] || export SKIP_PYTHON=0
-PYTHON="$PYTHON" CODESIGN_IDENTITY="$IDENTITY" scripts/build_app.sh
+# WITH_UPDATES=1: this copy is the one that is to update itself. A dry run builds the same.
+WITH_UPDATES=1 PYTHON="$PYTHON" CODESIGN_IDENTITY="$IDENTITY" scripts/build_app.sh
 # The tools were checked in preflight, and the build has had SwiftPM at its packages since.
 # They are about to be handed the key: check them again, where they lie now.
 TOOLS=$(scripts/sparkle_tools.sh)

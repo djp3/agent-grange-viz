@@ -25,7 +25,7 @@ only Python's standard library.
 | `docs/` | `openapi.yaml`, the specification of `GET /v1/mesh` and its companions; `data-sources.md`, the survey behind it; `screenshot.png`, for the README |
 | `macos/` | the SwiftPM package for the host app (`Package.swift`, `Sources/AgentGrangeViz`, `Info.plist`, the icon) |
 | `packaging/` | the PyInstaller spec for the Python side |
-| `scripts/` | `build_app.sh`, `sign_app.sh`, `release.sh`, `sparkle_tools.sh`, `check_sparkle_key.sh`, `check_appcast.py`, `locked_venv.sh`, `check_min_macos.py`, `render_icon.sh`, `make_icon.sh` |
+| `scripts/` | `build_app.sh`, `sign_app.sh`, `release.sh`, `sparkle_tools.sh`, `check_sparkle_key.sh`, `sparkle_public_key.sh`, `check_appcast.py`, `locked_venv.sh`, `check_min_macos.py`, `render_icon.sh`, `make_icon.sh` |
 | `release-notes/` | one file per release, written for people who use the app |
 | `tests/` | plain pytest; `standins.py` holds a stand-in grange and a stand-in Docker |
 | `VERSION` | the single source of the version number |
@@ -97,12 +97,13 @@ During development `swift run` in `macos/` starts the window alone, and
 app ignores that variable.
 
 Only a release updates itself. A `swift run` has no `Info.plist`, and `scripts/build_app.sh`
-leaves the feed out of a build it signs ad-hoc, so neither starts Sparkle and **Check for
-Updates…** stays greyed out in both. A local build has the installed copy's bundle id, and
-with it that copy's Sparkle preferences: carrying the feed, a build from a branch would poll
-the releases and, with automatic installs on, be replaced by the published app as it quit.
-A build signed with a Developer ID (`CODESIGN_IDENTITY=…`, or a dry run of a release) keeps
-the feed.
+leaves the feed out of a copy unless it is told it is a release (`WITH_UPDATES=1`, which
+`scripts/release.sh` sets, for a dry run too), so neither starts Sparkle and **Check for
+Updates…** stays greyed out in both. A copy built by hand has the installed copy's bundle
+id, and with it that copy's Sparkle preferences: carrying the feed, a build from a branch
+would poll the releases and, with automatic installs on, be replaced by the published app as
+it quit. How a copy is signed does not decide it: one built by hand with a Developer ID
+carries no feed either. agent-farm and agent-frolic do the same.
 
 Sparkle is named in three places, raised together: the minimum in `macos/Package.swift`, the
 version that is linked in `macos/Package.resolved`, and the SHA-256 of that release's tools
@@ -168,7 +169,9 @@ Sparkle and poll nothing.
 Before it builds anything, the script refuses a working tree that is not clean, a tag that
 already exists, release notes that are missing, and a Sparkle key that is missing from the
 keychain or is not the one in `Info.plist` (`scripts/check_sparkle_key.sh`; it asks for the
-key by this app's account, since a keychain can hold another project's). After the build it
+key by this app's account, since a keychain can hold another project's). A key given as a
+file is held to the same: none of Sparkle's tools says a file's public half, so
+`scripts/sparkle_public_key.sh` works it out. After the build it
 refuses an appcast in which the zip or the feed came out unsigned (the
 zip does when the key Sparkle's tool was given is not the one in `Info.plist`, the feed when
 the app does not ask for a signed one). The tag is made last and removed again if publishing
@@ -177,9 +180,14 @@ fails, so a second run starts clean.
 `scripts/sparkle_tools.sh` says where Sparkle's tools are. Nothing is downloaded for them:
 the package SwiftPM fetches for the build carries them beside the framework, under
 `macos/.build/artifacts`, and the script resolves the packages first when a checkout has
-never been built. On every run it checks each tool against the SHA-256 pinned in the script,
-whatever SwiftPM checked when it downloaded them: `generate_appcast` is handed the private
-key every installed copy trusts. If a tool is refused, delete `macos/.build`, all of it;
-with only `artifacts` gone SwiftPM still believes the download is there.
+never been built, or holds the tools of another version than is pinned. On every run it
+checks each tool against the SHA-256 pinned in the script, whatever SwiftPM checked when it
+downloaded them: `generate_appcast` is handed the private key every installed copy trusts.
+It reads the pinned version from `Package.resolved` with awk alone. If the tools are missing
+or refused after a resolve, run `swift package reset` in `macos/` (or remove `macos/.build`,
+all of it): with only `artifacts` gone SwiftPM still believes the download is there.
+
+The script, `scripts/sparkle_public_key.sh` and their tests are the same files as in
+agent-frolic.
 
 The repository is public: the notes, like everything else in it, use made-up names.

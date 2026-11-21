@@ -49,11 +49,6 @@ def test_the_app_takes_no_feed_that_is_not_signed():
 def test_the_tools_that_are_handed_the_key_are_pinned_by_hash():
     pins = json.loads(read("macos", "Package.resolved"))["pins"]
     version = next(pin["state"]["version"] for pin in pins if pin["identity"] == "sparkle")
-    script = read("scripts", "sparkle_tools.sh")
-    for tool in ("generate_appcast", "generate_keys", "sign_update"):
-        assert re.search(rf'^\s*{re.escape(version)}:{tool}\)\s+echo "[0-9a-f]{{64}}" ;;$', script, re.M), \
-            f"no pinned SHA-256 for the {tool} of Sparkle {version}, the version the app links"
-    # that the script acts on them is tests/test_sparkle_tools.py's to show: it runs it
     package = read("macos", "Package.swift")
     assert "https://github.com/sparkle-project/Sparkle.git" in package
     # The manifest's minimum is never above the pin: then every check here would read a pin
@@ -86,16 +81,20 @@ def test_sparkle_is_carried_checked_and_signed_inside_out():
     assert "--deep" not in " ".join(steps)
 
 
-def test_sparkles_license_goes_wherever_its_framework_goes():
-    """Its license asks that every copy carry its notice. The app only named it."""
+def test_the_licenses_of_what_the_swift_host_links_go_into_the_app():
+    """Sparkle's framework is carried whole and SwiftTerm is linked in. Each license asks that
+    its text go with every copy; the app only named them."""
     build = read("scripts", "build_app.sh")
-    copied = build.index('cp "$SPARKLE_LICENSE" "$APP/Contents/Resources/LICENSE-Sparkle"')
-    refused = build.index('[ -s "$SPARKLE_LICENSE" ] || {')
+    assert "for package in Sparkle SwiftTerm; do" in build
+    copied = build.index('cp "macos/.build/checkouts/$package/LICENSE" "$APP/Contents/Resources/LICENSE-$package"')
+    refused = build.index('[ -s "macos/.build/checkouts/$package/LICENSE" ]')
     assert refused < copied < build.index('scripts/sign_app.sh "$APP"'), "there, or no build; and sealed by the signature"
-    assert "LICENSE-Sparkle" in read("NOTICE")
+    notice = read("NOTICE")
+    assert "LICENSE-Sparkle" in notice and "LICENSE-SwiftTerm" in notice
     built = ROOT / "dist" / "agent-grange-viz.app" / "Contents"
-    if (built / "Frameworks" / "Sparkle.framework").is_dir():          # an app was built here: look at it
-        assert "Permission is hereby granted" in (built / "Resources" / "LICENSE-Sparkle").read_text()
+    if (built / "Resources" / "LICENSE-SwiftTerm").is_file():           # an app was built here since: look at it
+        for package in ("Sparkle", "SwiftTerm"):
+            assert "Permission is hereby granted" in (built / "Resources" / f"LICENSE-{package}").read_text()
 
 
 def test_the_menu_offers_a_check_and_only_a_copy_with_a_feed_updates_itself():
@@ -108,16 +107,20 @@ def test_the_menu_offers_a_check_and_only_a_copy_with_a_feed_updates_itself():
     assert swift.index("setupUpdater()") < swift.index("buildMenus()"), "the item is built with its target in hand"
 
 
-def test_a_local_build_is_made_without_the_feed():
-    """It has the installed copy's bundle id, and so its Sparkle preferences. With automatic
-    installs on, a build from a branch would be replaced by the published app as it quit."""
+def test_only_a_release_carries_the_feed_however_a_copy_is_signed():
+    """A copy built by hand has the installed copy's bundle id, and so its Sparkle preferences.
+    With automatic installs on, a build from a branch would be replaced by the published app
+    as it quit. A Developer ID does not make a copy a release: release.sh says which it is."""
     build = read("scripts", "build_app.sh")
-    local = build[build.index('if [ "${CODESIGN_IDENTITY:--}" = "-" ]; then'):]
+    local = build[build.index('if [ "${WITH_UPDATES:-0}" != 1 ]; then'):]
     local = local[:local.index("\nfi\n")]
-    assert '/usr/libexec/PlistBuddy -c "Delete :SUFeedURL" "$APP/Contents/Info.plist"' in local
+    for key in ("SUFeedURL", "SUEnableAutomaticChecks", "SUScheduledCheckInterval"):
+        assert f'-c "Delete :{key}"' in local, key
+    assert "CODESIGN_IDENTITY" not in local, "how it is signed does not decide it"
     written = build.index('sed "s/__VERSION__/$VERSION/g" macos/Info.plist > "$APP/Contents/Info.plist"')
     assert written < build.index(local) < build.index('scripts/sign_app.sh "$APP"'), "after it is written, before it is signed"
     assert "SUFeedURL" in read("macos", "Info.plist"), "a release, built from the same file, keeps it"
+    # that a release, and a dry run of one, ask for the copy that updates itself: tests/test_release.py
 
 
 def test_closing_the_viewers_window_quits_whatever_else_is_open():

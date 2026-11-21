@@ -32,8 +32,13 @@ exit 0
 """
 GH = NOTES_A_CALL.format(name="gh") + '[ "$1 $2" = "release view" ] && exit 1      # no such release yet\nexit 0\n'
 SECURITY = '#!/bin/sh\necho \'  1) ABCDEF0123456789ABCDEF0123456789ABCDEF01 "Developer ID Application: Made Up (TEAM123456)"\'\n'
-BUILD = NOTES_A_CALL.format(name="build_app") + ("mkdir -p dist/agent-grange-viz.app/Contents\n"
-                                                 "echo made-up > dist/agent-grange-viz.app/Contents/Info.plist\n")
+# scripts/build_app.sh: it notes how it was called, and whether it was asked for the copy
+# that updates itself (WITH_UPDATES), which only a release is.
+BUILD = ('#!/bin/sh\necho "build_app $* WITH_UPDATES=${WITH_UPDATES:-}" >> "$CALLS"\n'
+         "mkdir -p dist/agent-grange-viz.app/Contents\n"
+         "echo made-up > dist/agent-grange-viz.app/Contents/Info.plist\n")
+# scripts/sparkle_public_key.sh: the public half of the key file a test names ($FILE_HAS).
+PUBLIC_HALF = '#!/bin/sh\n[ -n "${FILE_HAS:-}" ] || exit 1\necho "$FILE_HAS"\n'
 GENERATE_APPCAST = NOTES_A_CALL.format(name="generate_appcast") + """out=""
 while [ $# -gt 0 ]; do [ "$1" = "-o" ] && out=$2; shift; done
 cp "$APPCAST" "$out"
@@ -61,6 +66,7 @@ class Release:
              + f'echo "{root}/tools"\n')
         shim(root / "scripts" / "locked_venv.sh", NOTES_A_CALL.format(name="locked_venv") + "echo /nowhere/python\n")
         shim(root / "scripts" / "build_app.sh", BUILD)
+        shim(root / "scripts" / "sparkle_public_key.sh", PUBLIC_HALF)
         shim(root / "tools" / "bin" / "generate_keys", GENERATE_KEYS)
         shim(root / "tools" / "bin" / "generate_appcast", GENERATE_APPCAST)
         shim(root / "tools" / "bin" / "sign_update", SIGN_UPDATE)
@@ -189,12 +195,29 @@ def test_a_key_that_is_not_the_apps_is_found_before_anything_is_built(release, a
 def test_a_key_file_named_from_where_the_script_was_called_is_still_found(release):
     """The script moves to the checkout before it does anything else."""
     (release.where / "exported.key").write_text("made up")
-    done = release.run(dry=True, SPARKLE_PRIVATE_KEY_FILE="exported.key")
+    done = release.run(dry=True, SPARKLE_PRIVATE_KEY_FILE="exported.key", FILE_HAS=THE_APPS_KEY)
     assert done.returncode == 0, done.stderr
     assert f"--ed-key-file {release.where / 'exported.key'}" in release.called("generate_appcast")[0]
     assert not (release.where / "asked").exists(), "the keychain is left alone"
     gone = release.run(dry=True, SPARKLE_PRIVATE_KEY_FILE="nowhere.key")
     assert gone.returncode == 1 and "names no file that can be read" in gone.stderr
+
+
+def test_a_key_file_whose_key_is_not_the_apps_is_found_before_anything_is_built(release):
+    (release.where / "exported.key").write_text("made up")
+    done = release.run(SPARKLE_PRIVATE_KEY_FILE="exported.key", FILE_HAS=ANOTHER_KEY)
+    assert done.returncode == 1 and "is not the one in macos/Info.plist" in done.stderr
+    assert not release.called("locked_venv") and not release.called("build_app") and release.nothing_left_this_mac()
+
+
+def test_a_release_and_a_dry_run_of_one_build_the_copy_that_updates_itself(release):
+    """Only that copy carries the feed: one built by hand does not, and so does not offer to
+    replace itself with the published release."""
+    release.run()
+    assert release.called("build_app")[0].endswith("WITH_UPDATES=1")
+    again = Release(release.where / "again")
+    again.run(dry=True)
+    assert again.called("build_app")[0].endswith("WITH_UPDATES=1")
 
 
 def test_without_notes_or_from_a_dirty_tree_nothing_is_built(release):
