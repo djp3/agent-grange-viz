@@ -2,9 +2,10 @@
 
 The viewer is a Python [Textual](https://textual.textualize.io) program. The Mac app is a
 thin native shell around it: a window with a [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm)
-terminal that runs a PyInstaller build of the Python code. Everything the viewer does happens
-in Python, so day-to-day development never touches Swift or the bundle. Beyond Textual it
-uses only Python's standard library.
+terminal that runs a PyInstaller build of the Python code, plus
+[Sparkle](https://sparkle-project.org) for updates. Everything the viewer does happens in
+Python, so day-to-day development never touches Swift or the bundle. Beyond Textual it uses
+only Python's standard library.
 
 ## Layout
 
@@ -24,7 +25,7 @@ uses only Python's standard library.
 | `docs/` | `openapi.yaml`, the specification of `GET /v1/mesh` and its companions; `data-sources.md`, the survey behind it; `screenshot.png`, for the README |
 | `macos/` | the SwiftPM package for the host app (`Package.swift`, `Sources/AgentGrangeViz`, `Info.plist`, the icon) |
 | `packaging/` | the PyInstaller spec for the Python side |
-| `scripts/` | `build_app.sh`, `sign_app.sh`, `release.sh`, `locked_venv.sh`, `check_min_macos.py`, `render_icon.sh`, `make_icon.sh` |
+| `scripts/` | `build_app.sh`, `sign_app.sh`, `release.sh`, `sparkle_tools.sh`, `check_sparkle_key.sh`, `check_appcast.py`, `locked_venv.sh`, `check_min_macos.py`, `render_icon.sh`, `make_icon.sh` |
 | `release-notes/` | one file per release, written for people who use the app |
 | `tests/` | plain pytest; `standins.py` holds a stand-in grange and a stand-in Docker |
 | `VERSION` | the single source of the version number |
@@ -54,9 +55,10 @@ To look at a state the demo does not reach, build a `Snapshot` by hand, as the t
 
     scripts/build_app.sh                 # -> dist/agent-grange-viz.app
 
-PyInstaller makes the Python side and `swift build` the window. The result is signed ad-hoc,
-which is enough to run it on the Mac that built it. It needs Python 3.14 and Xcode's command
-line tools.
+PyInstaller makes the Python side and `swift build` the window; Sparkle's framework, which
+SwiftPM downloads, is copied into the bundle beside them. The result is signed ad-hoc, which
+is enough to run it on the Mac that built it. It needs Python 3.14 and Xcode's command line
+tools.
 
 Dependencies are pinned exactly in `requirements.txt` and `requirements-build.txt`, and
 `requirements.lock` lists every package, indirect ones included, with the hashes of their
@@ -94,14 +96,42 @@ During development `swift run` in `macos/` starts the window alone, and
 `AGENT_GRANGE_VIZ_CORE=<an executable>` points it at any viewer to run inside. The assembled
 app ignores that variable.
 
+Only a release updates itself. A `swift run` has no `Info.plist`, and `scripts/build_app.sh`
+leaves the feed out of a build it signs ad-hoc, so neither starts Sparkle and **Check for
+Updates…** stays greyed out in both. A local build has the installed copy's bundle id, and
+with it that copy's Sparkle preferences: carrying the feed, a build from a branch would poll
+the releases and, with automatic installs on, be replaced by the published app as it quit.
+A build signed with a Developer ID (`CODESIGN_IDENTITY=…`, or a dry run of a release) keeps
+the feed.
+
+Sparkle is named in three places, raised together: the minimum in `macos/Package.swift`, the
+version that is linked in `macos/Package.resolved`, and the SHA-256 of that release's tools
+in `scripts/sparkle_tools.sh`. The build holds SwiftPM to `Package.resolved`
+(`--only-use-versions-from-resolved-file`): a minimum raised without the pin stops the build,
+where SwiftPM left to itself would move the pin and rewrite the file. To raise Sparkle, run
+`swift package update sparkle` in `macos/`, commit the new `Package.resolved`, and add the
+new tools' hashes.
+
 ## Releasing
 
 `scripts/release.sh` builds the app from the lock, signs it with a Developer ID under the
-hardened runtime, has Apple notarize it, staples it, zips it, tags `v<VERSION>` and publishes
-the GitHub release with the notes in `release-notes/<VERSION>.md`.
+hardened runtime, has Apple notarize it, staples it, zips it, writes a Sparkle appcast signed
+with this app's EdDSA key, tags `v<VERSION>` and publishes the GitHub release with the zip
+and `appcast.xml` attached. The notes in `release-notes/<VERSION>.md` go into the appcast,
+where Sparkle's update window shows them, and onto the GitHub release.
 
-The app does not update itself: there is no Sparkle here, unlike agent-farm and agent-frolic.
-A release is a download, and nothing installed learns of it.
+The key signs twice. The zip's signature sits in the appcast's `<enclosure>`, and the app
+checks it before it unpacks an update (`SUVerifyUpdateBeforeExtraction`). The appcast's own
+signature is a comment at its end, and covers the rest: which version is on offer, which
+macOS it needs, where the zip is, the notes. The app takes no feed without it
+(`SURequireSignedFeed`), and Sparkle will not start with that key set and the other missing.
+`scripts/check_appcast.py` and Sparkle's `sign_update --verify` hold the release to both
+before anything is tagged.
+
+Installed apps poll
+`https://github.com/djp3/agent-grange-viz/releases/latest/download/appcast.xml` once a day,
+so creating the release is what ships the update. Copies of 0.1.1 and 0.1.2 came before
+Sparkle and poll nothing.
 
 ### One-time setup
 
@@ -112,20 +142,44 @@ A release is a download, and nothing installed learns of it.
 
   or a profile that already exists under another name (`NOTARY_PROFILE=<name>`), or an App
   Store Connect API key (`NOTARY_KEY_ID`, `NOTARY_ISSUER_ID`, `NOTARY_KEY_FILE`).
+- The Sparkle key, in the login keychain under the account `agent-grange-viz`. Its public
+  half is `SUPublicEDKey` in `macos/Info.plist`:
+
+      "$(scripts/sparkle_tools.sh)"/bin/generate_keys --account agent-grange-viz -p    # prints that public key
+
+  Apps already installed take no feed that is not signed with this key, so if it is lost
+  nothing can be offered to them again. Keep a copy of it somewhere safe:
+  `generate_keys --account agent-grange-viz -x <file>` exports it.
+  `SPARKLE_PRIVATE_KEY_FILE=<file>` signs with an exported key instead of the keychain's.
+  The first time `generate_appcast` reads the key, macOS asks whether it may.
 - `gh` logged in with push access to the repository.
 
 ### Each release
 
     echo 0.2.0 > VERSION
-    $EDITOR release-notes/0.2.0.md       # what is new, written for people who use the app
+    $EDITOR release-notes/0.2.0.md       # what is new, written for people who use the app;
+                                         # Sparkle's window is small: short paragraphs and - lists
     git add VERSION release-notes && git commit -m "Release 0.2.0"
     scripts/release.sh
 
-`DRY_RUN=1 scripts/release.sh` builds with the Developer ID and zips into `dist/`, then stops:
-nothing is sent to Apple or GitHub, and nothing is tagged.
+`DRY_RUN=1 scripts/release.sh` builds with the Developer ID, zips and writes the appcast into
+`dist/`, then stops: nothing is sent to Apple or GitHub, and nothing is tagged.
 
-The script refuses a working tree that is not clean, a tag that already exists, and release
-notes that are missing. The tag is made last and removed again if publishing fails, so a
-second run starts clean.
+Before it builds anything, the script refuses a working tree that is not clean, a tag that
+already exists, release notes that are missing, and a Sparkle key that is missing from the
+keychain or is not the one in `Info.plist` (`scripts/check_sparkle_key.sh`; it asks for the
+key by this app's account, since a keychain can hold another project's). After the build it
+refuses an appcast in which the zip or the feed came out unsigned (the
+zip does when the key Sparkle's tool was given is not the one in `Info.plist`, the feed when
+the app does not ask for a signed one). The tag is made last and removed again if publishing
+fails, so a second run starts clean.
+
+`scripts/sparkle_tools.sh` says where Sparkle's tools are. Nothing is downloaded for them:
+the package SwiftPM fetches for the build carries them beside the framework, under
+`macos/.build/artifacts`, and the script resolves the packages first when a checkout has
+never been built. On every run it checks each tool against the SHA-256 pinned in the script,
+whatever SwiftPM checked when it downloaded them: `generate_appcast` is handed the private
+key every installed copy trusts. If a tool is refused, delete `macos/.build`, all of it;
+with only `artifacts` gone SwiftPM still believes the download is there.
 
 The repository is public: the notes, like everything else in it, use made-up names.

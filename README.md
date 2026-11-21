@@ -68,7 +68,10 @@ state. It never pushes anything to the grange, and it changes nothing in Docker.
    drag `agent-grange-viz.app` to Applications.
 2. Open it. The app is notarized, so it opens like any other download.
 
-The app does not update itself yet: a new release is a new download from the same page.
+Updates take care of themselves: the app checks GitHub once a day and offers each new release
+with its notes. **agent-grange-viz ▸ Check for Updates…** checks now. (Versions 0.1.1 and
+0.1.2 came before this and check for nothing: from those, download the newer release by hand
+once.)
 
 You need macOS 27 (Golden Gate) or later on Apple silicon. To watch something real you also
 need a grange running on this Mac ([agent-grange](https://github.com/djp3/agent-grange):
@@ -86,7 +89,8 @@ earlier macOS versions), then:
     .venv/bin/python main.py
 
 Run that way, it has no window or menus of its own (`--demo` and `--port N` stand in for the
-Viewer menu), `git pull` brings it up to date, and its settings and log stay in that folder.
+Viewer menu), it gets no automatic updates (`git pull` brings it up to date), and its
+settings and log stay in that folder.
 
 ## The window
 
@@ -224,8 +228,11 @@ invented, and the screen says so.
   sidecar. It starts, stops and changes nothing. Turn it off with `"use_docker": false` in
   the settings or `--no-docker`; the headscale and tailnet rows then show only what the
   grange itself relays of its sidecar in `GET /v1/mesh`.
-- **Nothing else.** It reaches no other machine, sends none of this anywhere, and keeps no
-  history on disk: what the panels count is held in memory while the app is open.
+- **GitHub, once a day**, to ask whether there is a newer release. That is the Mac app's
+  update check; a run from source makes none. The request names the app and its version, and
+  nothing about your granges goes with it.
+- **Nothing else.** It sends none of what it reads anywhere, and keeps no history on disk:
+  what the panels count is held in memory while the app is open.
 
 ## Made to work with agent-farm, agent-grange and agent-frolic
 

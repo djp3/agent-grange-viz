@@ -4,20 +4,20 @@
 # Build dist/agent-grange-viz.app from a checkout:
 #   1. PyInstaller onedir of main.py            -> dist/python/agent-grange-viz-core
 #   2. SwiftPM release build of the host app     -> macos/.build/release/AgentGrangeViz
-#   3. assemble the bundle (binary, the Python tree, icon, Info.plist), and check the macOS
-#      minimum (scripts/check_min_macos.py): stop if anything in it needs a newer macOS than
-#      Info.plist says, or the Swift executable records another minimum
+#   3. assemble the bundle (binary, Sparkle.framework, the Python tree, icon, Info.plist),
+#      and check the macOS minimum (scripts/check_min_macos.py): stop if anything in it needs
+#      a newer macOS than Info.plist says, or the Swift executable records another minimum
 #   4. sign it: ad-hoc, or with CODESIGN_IDENTITY="Developer ID Application: …" (or that
 #      certificate's hash) and the hardened runtime, as scripts/release.sh does
 #   5. ask the signed copy to check itself, once main.py knows how (--selfcheck)
 # Needs: .venv with requirements.txt + requirements-build.txt (or PYTHON=<the python of
 # another venv, such as the one scripts/locked_venv.sh makes>), Xcode command line tools.
 # The version comes from VERSION and is used for both CFBundleShortVersionString and
-# CFBundleVersion.
+# CFBundleVersion (Sparkle compares the latter; dotted numbers compare naturally).
 #
-# By itself this builds an app for the Mac it is built on. scripts/release.sh builds the one
-# that leaves it: signed with a Developer ID, notarized, and published. Unlike agent-farm
-# and agent-frolic there is no Sparkle: the app does not update itself.
+# By itself this builds an app for the Mac it is built on, which does not update itself.
+# scripts/release.sh builds the one that leaves it: signed with a Developer ID, notarized,
+# and published where Sparkle looks.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -56,9 +56,17 @@ fi
 step "host app: swift build"
 BIN=macos/.build/release/AgentGrangeViz
 rm -f "$BIN"                                   # so an existing binary can only come from this build
-( cd macos && swift build -c release --product AgentGrangeViz 2>&1 | grep -E "error|warning: unre|Build complete"
+# Held to Package.resolved: left to itself SwiftPM moves a pin that the manifest has outgrown
+# and rewrites the file, mid-build, and the app would link a version no commit names.
+( cd macos && swift build --only-use-versions-from-resolved-file -c release --product AgentGrangeViz 2>&1 \
+    | grep -E "error|warning: unre|Build complete"
   [ "${PIPESTATUS[0]}" -eq 0 ] )              # keep the compiler's verdict, not grep's
 [ -x "$BIN" ] || { echo "swift build did not produce $BIN" >&2; exit 1; }
+# Sparkle comes as a binary framework that SwiftPM downloads next to the build.
+# -print -quit, here and below, not `| head -1`: under pipefail a find cut off by head
+# fails the pipeline, and the assignment would end the script with nothing said.
+SPARKLE_FW=$(find macos/.build/artifacts -type d -name Sparkle.framework -path "*macos-*" -print -quit)
+[ -d "$SPARKLE_FW" ] || { echo "Sparkle.framework not found under macos/.build/artifacts" >&2; exit 1; }
 
 step "icon"
 # Made afresh by every build, which takes a second. Git ignores the .icns, so one left by an
@@ -73,20 +81,41 @@ scripts/make_icon.sh "$ICON" "$ICON_SMALL" "$ICNS"
 
 step "assemble $APP ($VERSION)"
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Frameworks" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/AgentGrangeViz"
-# SwiftPM can record an absolute rpath into its own .build folder; nothing the app loads
-# lives there (SwiftTerm is linked in, and the Swift runtime is the system's).
-otool -l "$APP/Contents/MacOS/AgentGrangeViz" | awk '/LC_RPATH/{f=1} f&&/ path /{print $2; f=0}' | while read -r rp; do
-    case "$rp" in */.build/*) install_name_tool -delete_rpath "$rp" "$APP/Contents/MacOS/AgentGrangeViz" 2>/dev/null || true ;; esac
+# Where the app looks for Sparkle.framework. It needs one place, the one Package.swift sets:
+# its own Contents/Frameworks. SwiftPM adds @loader_path, beside the executable, where a
+# `swift run` finds the framework and the finished app has nothing; and it has been known to
+# record an absolute path into .build. Whatever else is there is taken out, and the build
+# stops if the one that matters is not: the app would not start.
+EXE="$APP/Contents/MacOS/AgentGrangeViz"
+NEEDED="@executable_path/../Frameworks"
+rpaths() { otool -l "$EXE" | awk '/LC_RPATH/{f=1} f&&/ path /{print $2; f=0}'; }
+rpaths | while read -r rp; do
+    [ "$rp" = "$NEEDED" ] || install_name_tool -delete_rpath "$rp" "$EXE"
 done
+[ "$(rpaths)" = "$NEEDED" ] || { echo "the app's executable looks for its frameworks in: $(rpaths | tr '\n' ' '); it must be $NEEDED alone" >&2; exit 1; }
+cp -R "$SPARKLE_FW" "$APP/Contents/Frameworks/"
 cp -R dist/python/$CORE "$APP/Contents/Resources/$CORE"
 cp "$ICNS" "$APP/Contents/Resources/AppIcon.icns"
 # The license the code is under, and the notice that says so and where the source is, go in
 # every copy of the app: the license asks for both. The icon is this project's own drawing,
 # so there are no credits to carry beside them.
 cp LICENSE NOTICE "$APP/Contents/Resources/"
+# Sparkle's framework is carried whole, and its license asks that every copy carry its
+# notice. The text comes with the package SwiftPM fetched, beside the framework.
+SPARKLE_LICENSE=$(find macos/.build/artifacts -maxdepth 3 -type f -name LICENSE -print -quit)
+[ -s "$SPARKLE_LICENSE" ] || { echo "Sparkle's LICENSE not found under macos/.build/artifacts: the app must not carry the framework without it" >&2; exit 1; }
+cp "$SPARKLE_LICENSE" "$APP/Contents/Resources/LICENSE-Sparkle"
 sed "s/__VERSION__/$VERSION/g" macos/Info.plist > "$APP/Contents/Info.plist"
+# Only a build signed with a Developer ID, which is what a release is, looks for updates. A
+# local build is made without the feed: it has the installed copy's bundle id, and so its
+# Sparkle preferences, and with automatic installs on it would be replaced by the published
+# app as it quit. The app starts no updater without a feed (AppDelegate.updatesItself).
+if [ "${CODESIGN_IDENTITY:--}" = "-" ]; then
+    /usr/libexec/PlistBuddy -c "Delete :SUFeedURL" "$APP/Contents/Info.plist"
+    echo "a local build: it carries no update feed, and will not look for updates"
+fi
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
 step "macOS minimum"

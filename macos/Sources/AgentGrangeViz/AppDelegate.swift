@@ -1,6 +1,7 @@
 // Copyright (C) 2026 Don Patterson
 // SPDX-License-Identifier: GPL-3.0-or-later
 import AppKit
+import Sparkle
 import SwiftTerm
 
 /// Colors and font for the terminal view. Textual paints every cell itself, so the
@@ -29,11 +30,12 @@ final class FirstClickTerminalView: LocalProcessTerminalView {
 }
 
 /// Hosts the Python TUI (agent-grange-viz-core, a PyInstaller build of main.py) inside a
-/// SwiftTerm view. Everything the viewer does still happens in Python; this file only
-/// provides the window, the pty and the menus.
+/// SwiftTerm view and wires Sparkle for updates. Everything the viewer does still happens
+/// in Python; this file only provides the window, the pty and the menus.
 ///
-/// Unlike agent-farm and agent-frolic there is no Sparkle here yet: the app does not update
-/// itself, and a new release is a new download.
+/// Sparkle reads the feed named in Info.plist (SUFeedURL: the appcast attached to the
+/// newest GitHub release) once a day and on Check for Updates. Its own window offers the
+/// update and shows that release's notes, which scripts/release.sh embeds in the appcast.
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, LocalProcessTerminalViewDelegate {
     /// The bundle's release number ("0.1.0"); the viewer gets it as AGENT_GRANGE_VIZ_VERSION.
     private let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
@@ -48,6 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Loca
     private var centeredTitle: CenteredTitle?
     private var window: NSWindow!
     private var terminal: LocalProcessTerminalView!
+    private var updater: SPUStandardUpdaterController?
     private var coreRunning = false
     /// Set by Restart Viewer and by Show the Demo; consumed when the old process has actually gone away.
     private var restartRequested = false
@@ -81,6 +84,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Loca
     // MARK: - lifecycle
 
     func applicationDidFinishLaunching(_ note: Notification) {
+        setupUpdater()
         buildMenus()
         makeWindow()
         // Page Up and Page Down reach the viewer only once it asks for application cursor
@@ -92,6 +96,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Loca
 
     func applicationWillTerminate(_ note: Notification) {
         if coreRunning { terminal.terminate() }
+    }
+
+    /// Closing the viewer's window quits the app, whatever else is open. With one window that
+    /// was applicationShouldTerminateAfterLastWindowClosed's doing. Sparkle's update window is
+    /// a window too: with it open the app stayed in the Dock, with nothing left to show.
+    func windowWillClose(_ note: Notification) {
+        guard (note.object as? NSWindow) === window else { return }
+        DispatchQueue.main.async { NSApp.terminate(nil) }
+    }
+
+    /// Only a copy that carries a feed updates itself, and only a release does. A `swift run`
+    /// has no Info.plist at all, and scripts/build_app.sh leaves the feed out of a local build.
+    /// With it, a build made from a branch would poll the releases, and where automatic
+    /// installs are on (a preference kept by bundle id, so shared with the installed copy) it
+    /// would be replaced by the published app as it quit.
+    private var updatesItself: Bool { Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil }
+
+    private func setupUpdater() {
+        guard updatesItself else { return }
+        updater = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
     }
 
     private func makeWindow() {
@@ -107,6 +131,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Loca
         w.tabbingMode = .disallowed
         w.backgroundColor = Theme.background
         w.delegate = self
+        // AppKit frees a closed window by default, while this object goes on holding it: a
+        // title that arrives after the close would be written to freed memory.
+        w.isReleasedWhenClosed = false
         w.center()
         w.setFrameAutosaveName("agent-grange-viz.main")
 
@@ -231,6 +258,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Loca
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "About agent-grange-viz",
                         action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(.separator())
+        // With no updater (a `swift run`, a local build) the item has no target and stays greyed out.
+        let check = NSMenuItem(title: "Check for Updates…",
+                               action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)), keyEquivalent: "")
+        check.target = updater
+        appMenu.addItem(check)
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Hide agent-grange-viz", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         let hideOthers = appMenu.addItem(withTitle: "Hide Others",
