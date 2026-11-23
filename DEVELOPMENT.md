@@ -15,6 +15,8 @@ only Python's standard library.
 | `model.py` | the contract between sources and views: a `Snapshot` of this Mac's grange, its sidecar and every peer. `None` means "not known", and every time is an age in seconds |
 | `stack.py` | the Stack: where each column breaks, what it says about it, the grid, the diagnosis, the detail pane and every tooltip, as functions of a `Snapshot` |
 | `panels.py` | the liveness and tailnet panels above the grid |
+| `news.py` | the farm news under the diagnosis: what the farms reported, drawn from a `Snapshot` |
+| `farms.py` | how a source works that news out: one whole board from `GET /v1/agents` compared with the next |
 | `live.py` | the live source: reads the grange and the sidecar on threads of its own, and works every age out as of now |
 | `grangeapi.py` | the grange's local API, read-only: `GET /health`, `/version`, `/v1/agents`, `/v1/mesh` |
 | `sidecar.py` | the Docker side: the two containers' state, and `tailscale status`, `ping` and `metrics` through `docker exec` |

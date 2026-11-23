@@ -395,14 +395,14 @@ def test_unreachable_says_what_docker_knows():
     assert "Docker socket not found" in stack.unreachable(snap, 200).plain
 
 
-def test_the_height_budget_keeps_room_for_the_diagnosis():
+def test_the_height_budget_keeps_room_for_the_diagnosis_and_the_farm_news():
     for height in range(24, 80):
         band, lines, gap = stack.fit_height(height)
         body = sum(min(lines, stack.MAX_LINES.get(layer, lines)) for layer in stack.LAYERS)
         used = 3 + band + 4 + body + (len(stack.LAYERS) - 1) * gap
         assert band >= stack.PANEL_MIN and lines in (2, 3)
         if height >= 36:
-            assert height - used >= stack.DIAG_MIN - 1, height
+            assert height - used >= stack.DIAG_MIN - 1 + stack.NEWS_MIN, height    # and the farm news under it
 
 
 def test_strangers_are_the_latest_refusal_per_source():

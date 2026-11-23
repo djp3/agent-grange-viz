@@ -59,6 +59,7 @@ GUTTER = 11
 PANEL_H = 11                                   # the liveness and tailnet band, its rule included
 PANEL_MIN = 7
 DIAG_MIN = 7                                   # the diagnosis keeps its rule, title and five rows
+NEWS_MIN = 5                                   # the farm news under it: a blank line, its title, three rows
 SHORT = {"refused": "refuse", "timeout": "t/o", "offline": "off", "expired": "gone", "no farm": "farm",
          "outdated": "503", "no body": "body?", "no sock": "sock?", "log out": "logout", "stopped": "stop",
          "unknown": "?"}
@@ -338,7 +339,7 @@ def _detail_peer(snap: Snapshot, p: Peer) -> list:
             rows.append(("record", f"inc …{str(rec.incarnation)[-6:]} · rev {rec.rev} · counter {rec.counter}"))
         rows += [("ages", f"seen {age(rec.seen_age)} · farm {age(rec.farm_age)}"
                           f"{' · farm_stale' if rec.farm_stale else ''}"),
-                 ("agents", f"{rec.agents} (a count; who and what is agent-farm's)")]
+                 ("agents", f"{rec.agents} (who they are: the farm news, under the diagnosis)")]
     elif p.gone is not None:
         more = f", remembered for {age(p.gone.forget_left)} more" if p.gone.forget_left is not None else ""
         rows.append(("record", f"{p.gone.kind} {age(p.gone.age)} ago{more}"))
@@ -454,8 +455,8 @@ def strangers(snap: Snapshot) -> list:
 # ---- the height budget -----------------------------------------------------------------------------
 def fit_height(height: int) -> tuple:
     """(panel band, lines per cell, blank line between layers): the most the window can hold
-    while leaving the diagnosis at least a few rows."""
-    rest = height - 3 - DIAG_MIN                      # the top line, its rule, and the keys
+    while leaving the diagnosis at least a few rows, and the farm news under it a few more."""
+    rest = height - 3 - DIAG_MIN - NEWS_MIN           # the top line, its rule, and the keys
     for lines, gap in ((3, 1), (3, 0), (2, 1), (2, 0)):
         body = sum(min(lines, MAX_LINES.get(layer, lines)) for layer in LAYERS)
         if PANEL_H + 4 + body + (len(LAYERS) - 1) * gap <= rest:
@@ -832,8 +833,8 @@ def tip_for(snap: Snapshot, cols: list, key: str) -> Optional[Text]:
         line(*LEGEND["farm"])
         line(("first line   the bar: farm age, time since that farm last pushed its list, filling toward the "
               "60 s farm_stale line (R6.3)", INK2))
-        line(("second line  how many agents that farm reports: a count only; who and what is agent-farm's and "
-              "agent-frolic's business", INK2))
+        line(("second line  how many agents that farm reports. Who they are is in the farm news under the "
+              "diagnosis: pick the column", INK2))
         line(("A farm pushes on every change and at least every 30 s (R5.2).", MUTED))
         if stopped:
             line((STOPPED_TIP, MUTED))

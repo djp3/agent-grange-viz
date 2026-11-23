@@ -40,10 +40,12 @@ def rfc3339(epoch: float) -> str:
     return datetime.fromtimestamp(epoch, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f") + "000Z"
 
 
-def entry(gid: str, seen: float = 1.0, farm=5.0, stale: bool = False, agents: int = 1) -> dict:
-    """One grange as /v1/agents lists it."""
+def entry(gid: str, seen: float = 1.0, farm=5.0, stale: bool = False, agents=1) -> dict:
+    """One grange as /v1/agents lists it. `agents` is how many it reports, all busy, or who
+    they are: (name, state) pairs."""
+    listed = [(f"{gid}-pr-{i} task", "busy") for i in range(agents)] if isinstance(agents, int) else agents
     return {"grange": gid, "seen_age_s": seen, "farm_age_s": farm, "farm_stale": stale,
-            "agents": [{"owner": gid, "name": f"{gid}-pr-{i} task", "state": "busy"} for i in range(agents)]}
+            "agents": [{"owner": gid, "name": name, "state": state} for name, state in listed]}
 
 
 class FakeClock:
@@ -142,6 +144,24 @@ class FakeGrange:
             if incarnation is not None:
                 self.picture["incarnation"] = incarnation
                 self.health["incarnation"] = incarnation
+            self.health["cursor"] = self.picture["cursor"]
+            self._cond.notify_all()
+
+    def restart(self, incarnation: int, others=()) -> None:
+        """make up: a new incarnation, the cursor from 1 (R5.8), and nothing heard from its own
+        farm yet. A grange that has just started lists its farm with nobody in it and no farm
+        age, until the farm next pushes (set_farm)."""
+        with self._cond:
+            self.picture["granges"] = [entry(self.gid, seen=0.0, farm=None, agents=0)] + list(others)
+            self.picture["cursor"] = self.health["cursor"] = 1
+            self.picture["incarnation"] = self.health["incarnation"] = incarnation
+            self._cond.notify_all()
+
+    def set_farm(self, agents) -> None:
+        """This grange's own farm reports: its entry's agents, and the cursor moves (R5.6)."""
+        with self._cond:
+            self.picture["granges"][0] = entry(self.gid, seen=0.0, agents=agents)
+            self.picture["cursor"] += 1
             self.health["cursor"] = self.picture["cursor"]
             self._cond.notify_all()
 

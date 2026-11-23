@@ -14,6 +14,10 @@ Two rules hold everywhere:
   • Every time is an age in seconds, already worked out by the source at the moment the
     Snapshot was built. Nothing here is a timestamp, so nothing depends on anybody's clock.
 
+Who the agents are is here for one thing, the farm news under the diagnosis: each grange's
+agents by name and state (GET /v1/agents serves them), and what changed from one answer to
+the next. The Stack itself still needs only how many there are.
+
 A source is anything with:
 
     start()                 begin reading (threads, timers); returns at once
@@ -43,7 +47,7 @@ class Record:
     seen_age: float                      # since its liveness was last refreshed (R5.9)
     farm_age: Optional[float]            # since that grange's farm last pushed; None: never
     farm_stale: bool                     # the origin's own flag (R6.3)
-    agents: int                          # how many agents it reports; who and what is not ours
+    agents: int                          # how many agents it reports; who they are: Snapshot.farms
     rev: Optional[int] = None            # content version            (/v1/mesh)
     counter: Optional[int] = None        # liveness version           (/v1/mesh)
     incarnation: Optional[int] = None    # chosen at that grange's start (/v1/mesh)
@@ -170,6 +174,29 @@ class Event:
     note: str = ""
 
 
+@dataclass(frozen=True)
+class Agent:
+    """One agent as its farm reports it (GET /v1/agents). Both words were typed on another
+    Mac: a source hands them on as one line each, with no control character (fmt.one_line)."""
+    name: str
+    state: str                           # agent-farm's words are busy · waiting · idle; a grange
+                                         # passes any word on as it came (R4.1)
+
+
+@dataclass
+class FarmChange:
+    """One thing a grange's farm reported, as it reached this grange. A source works these out
+    by comparing one answer of GET /v1/agents with the next (farms.py)."""
+    age: float                           # seconds ago it was seen here
+    grange: str                          # whose farm
+    kind: str                            # started · ended · state · on · off
+    name: str = ""                       # started, ended, state: the agent
+    before: str = ""                     # ended, state: the state it was in
+    after: str = ""                      # started, state: the state it is in
+    agents: int = 0                      # on, off: how many agents came or went with the grange
+    note: str = ""                       # on, off: why, when the source can tell (expired, left…)
+
+
 @dataclass
 class Docker:
     """What Docker says about the two containers, when the viewer may ask it."""
@@ -189,6 +216,11 @@ class Snapshot:
     peers: list = field(default_factory=list)        # [Peer], in no particular order
     events: list = field(default_factory=list)       # [Event], oldest first, the last five minutes
     strangers: list = field(default_factory=list)    # [Event]: refusals of sources that are no peer
+    farms: dict = field(default_factory=dict)        # grange id -> [Agent], for every grange on the
+                                                     # board, this Mac's included; None for one whose
+                                                     # farm has not reported since its grange started
+    farm_news: list = field(default_factory=list)    # [FarmChange], oldest first
+    farm_watched: Optional[float] = None             # how long answers have been compared; None: not yet
     docker: Docker = field(default_factory=Docker)
     reachable: bool = True               # the grange answered on its local API
     unreachable_for: Optional[float] = None   # how long nothing has answered

@@ -260,6 +260,7 @@ def test_a_stale_image_stops_the_grange_and_nothing_it_said_is_handed_on(grange,
     assert src.poll_api() and src.poll_sidecar()
     before = src.snapshot()
     assert not before.refusing and by_name(before)["alice"].record is not None and before.me.agents == 1
+    assert len(before.farms["alice"]) == 3 and before.farm_watched is not None
     clock.tick(3)
     grange.stale = STALE_BODY                            # the tag moved
     assert src.poll_api() is False
@@ -282,6 +283,7 @@ def test_a_stale_image_stops_the_grange_and_nothing_it_said_is_handed_on(grange,
     assert alice.tailnet.online and alice.tailnet.path == "direct" and not alice.tailnet.stale
     assert snap.has_sidecar and snap.sidecar.state == "ok"
     assert ("refused", 503) in [(e.kind, e.status) for e in snap.events]
+    assert snap.farms == {} and snap.farm_news == [] and snap.farm_watched is None, "nor any agent"
     clock.tick(50)
     assert src.snapshot().me.stale_for == pytest.approx(60.0)
     grange.stale = None                                  # make update
@@ -289,6 +291,7 @@ def test_a_stale_image_stops_the_grange_and_nothing_it_said_is_handed_on(grange,
     snap = src.snapshot()
     assert not snap.refusing and snap.me.stale_for is None
     assert by_name(snap)["alice"].record.seen_age == pytest.approx(2.0) and "bob" in by_name(snap)
+    assert len(snap.farms["alice"]) == 3
 
 
 def test_a_stale_image_with_no_docker_leaves_only_that_it_is_stale(grange):
@@ -333,6 +336,225 @@ def test_a_restart_is_one_event_not_a_board_of_joins(grange):
     grange.set_granges([entry("alice"), entry("bob"), entry("carol"), entry("dave")])
     src.poll_api()
     assert kinds(src.snapshot())[-1] == ("join", "dave")  # later arrivals are news again
+
+
+# ---- the farm news: one answer compared with the next -----------------------------------------------
+def told(snap) -> list:
+    return [(c.grange, c.kind, c.name, c.before, c.after) for c in snap.farm_news]
+
+
+def test_the_farm_news_is_what_changed_between_two_answers(grange):
+    grange.set_farm([("viz-pr-9 farm news", "busy")])
+    grange.set_granges([entry("alice", agents=[("pr-7 docs", "busy"), ("pr-8 lint", "idle")])])
+    src, clock = source(grange)
+    src.poll_api()
+    snap = src.snapshot()
+    assert snap.farm_news == [] and snap.farm_watched == pytest.approx(0), "the first answer is where it starts"
+    assert [(a.name, a.state) for a in snap.farms["alice"]] == [("pr-7 docs", "busy"), ("pr-8 lint", "idle")]
+    assert [(a.name, a.state) for a in snap.farms["djp3"]] == [("viz-pr-9 farm news", "busy")], "this Mac's farm too"
+
+    clock.tick(4)
+    grange.set_granges([entry("alice", agents=[("pr-7 docs", "waiting"), ("pr-11 tests", "busy")])])
+    src.poll_api()
+    assert told(src.snapshot()) == [("alice", "state", "pr-7 docs", "busy", "waiting"),
+                                    ("alice", "started", "pr-11 tests", "", "busy"),
+                                    ("alice", "ended", "pr-8 lint", "idle", "")]
+    clock.tick(3)
+    grange.set_farm([("viz-pr-9 farm news", "waiting")])
+    src.poll_api()
+    snap = src.snapshot()
+    assert told(snap)[-1] == ("djp3", "state", "viz-pr-9 farm news", "busy", "waiting")
+    assert [c.age for c in snap.farm_news] == pytest.approx([3, 3, 3, 0]) and snap.farm_watched == pytest.approx(7)
+    clock.tick(1)
+    grange.touch("alice", seen_age_s=0.5)                # a heartbeat: nothing any farm said changed
+    src.poll_api()
+    assert len(src.snapshot().farm_news) == 4
+    assert grange.wrote() == []
+
+
+def test_a_grange_leaving_the_board_takes_its_agents_as_one_piece_of_news(grange):
+    grange.set_granges([entry("alice", seen=3.0, agents=3), entry("bob", seen=5.0, agents=2)])
+    src, clock = source(grange)
+    src.poll_api()
+    clock.tick(1)
+    grange.touch("bob", seen_age_s=58.5)
+    src.poll_api()
+    clock.tick(1)
+    grange.set_granges([entry("alice", seen=1.0, agents=3)])             # bob, silent a minute, is dropped
+    src.poll_api()
+    clock.tick(2)
+    grange.set_granges([])                                               # alice withdraws
+    src.poll_api()
+    clock.tick(10)
+    grange.set_granges([entry("alice", agents=1), entry("carol", agents=4)])
+    src.poll_api()
+    assert [(c.grange, c.kind, c.agents, c.note) for c in src.snapshot().farm_news] == [
+        ("bob", "off", 2, "expired"), ("alice", "off", 3, "left"),
+        ("alice", "on", 1, "back on the board"), ("carol", "on", 4, "first record")]
+
+
+def test_a_restart_refilling_the_board_is_not_farm_news(grange):
+    grange.set_granges([entry("alice", agents=2), entry("bob", agents=1)])
+    src, clock = source(grange)
+    src.poll_api()
+    src._lost()                                          # make down ...
+    clock.tick(20)
+    grange.set_granges([entry("alice", agents=2)], incarnation=2000, cursor=1)   # ... make up
+    src.poll_api()
+    clock.tick(1)
+    grange.set_granges([entry("alice", agents=2), entry("bob", agents=1)], cursor=2)
+    src.poll_api()
+    assert src.snapshot().farm_news == [], "bob's agent did not end and start: the board started over"
+    clock.tick(10)
+    grange.set_granges([entry("alice", agents=[("alice-pr-0 task", "idle"), ("alice-pr-1 task", "busy")]),
+                        entry("bob", agents=1)])
+    src.poll_api()
+    assert told(src.snapshot()) == [("alice", "state", "alice-pr-0 task", "busy", "idle")], "later changes are news again"
+
+
+def test_this_grange_restarting_does_not_start_its_own_agents_again(grange):
+    """A grange that has just started has heard nothing from its farm: it lists it with nobody
+    in it and no farm age, until agent-farm next pushes, which can take 30 s (R5.2). That is
+    long after the board has refilled, and nobody started."""
+    mine = [("viz-pr-13 farm news", "busy"), ("viz-pr-9 docs", "idle")]
+    grange.set_farm(mine)
+    grange.set_granges([entry("alice", agents=2)])
+    src, clock = source(grange)
+    src.poll_api()
+    src._lost()                                          # make down ...
+    clock.tick(20)
+    grange.restart(2000)                                 # ... make up
+    src.poll_api()
+    snap = src.snapshot()
+    assert snap.farms == {"djp3": None}, "its farm has not reported: not known, which is not nobody"
+    clock.tick(1)
+    grange.set_granges([entry("alice", agents=2)])       # the board refilling
+    src.poll_api()
+    clock.tick(24)
+    grange.set_farm(mine)                                # agent-farm's next push, long after the quiet
+    src.poll_api()
+    snap = src.snapshot()
+    assert snap.farm_news == [] and [(a.name, a.state) for a in snap.farms["djp3"]] == mine
+    clock.tick(3)
+    grange.set_farm([("viz-pr-13 farm news", "waiting")])                # and now something did change
+    src.poll_api()
+    assert told(src.snapshot()) == [("djp3", "state", "viz-pr-13 farm news", "busy", "waiting"),
+                                    ("djp3", "ended", "viz-pr-9 docs", "idle", "")]
+
+
+def test_an_agent_that_ended_while_this_grange_was_down_is_told_when_its_farm_reports(grange):
+    grange.set_farm([("a", "busy"), ("b", "idle")])
+    src, clock = source(grange)
+    src.poll_api()
+    src._lost()
+    clock.tick(40)
+    grange.restart(2000)
+    src.poll_api()
+    clock.tick(2)                                        # inside the quiet: it is a change, not a refill
+    grange.set_farm([("a", "busy")])
+    src.poll_api()
+    assert told(src.snapshot()) == [("djp3", "ended", "b", "idle", "")]
+
+
+def test_a_teammates_grange_restarting_does_not_end_and_start_its_agents(grange):
+    """Its record comes back with no agents and no farm age; its farm reports again within
+    30 s. In between, what its farm says is not known."""
+    hers = [("pr-7 docs", "busy"), ("pr-8 lint", "idle")]
+    grange.set_granges([entry("alice", agents=hers)])
+    src, clock = source(grange)
+    src.poll_api()
+    clock.tick(5)
+    grange.set_granges([entry("alice", farm=None, agents=0)])            # her grange restarted
+    src.poll_api()
+    snap = src.snapshot()
+    assert snap.farm_news == [] and snap.farms["alice"] is None
+    assert by_name(snap)["alice"].record.agents == 0, "the Stack still draws what the record says"
+    clock.tick(12)
+    grange.set_granges([entry("alice", agents=hers)])
+    src.poll_api()
+    assert src.snapshot().farm_news == []
+    clock.tick(3)
+    grange.set_granges([entry("alice", agents=[("pr-7 docs", "waiting"), ("pr-8 lint", "idle")])])
+    src.poll_api()
+    assert told(src.snapshot()) == [("alice", "state", "pr-7 docs", "busy", "waiting")]
+
+
+def test_a_viewer_opened_just_after_the_grange_does_not_report_its_farms_first_push(grange):
+    grange.restart(1000)                                 # up a moment ago: nothing heard from its farm
+    src, clock = source(grange)
+    src.poll_api()
+    assert src.snapshot().farms == {"djp3": None}
+    clock.tick(18)
+    grange.set_farm([("a", "busy"), ("b", "idle"), ("c", "idle")])
+    src.poll_api()
+    snap = src.snapshot()
+    assert snap.farm_news == [] and len(snap.farms["djp3"]) == 3
+
+
+def test_a_grange_that_joins_is_told_once_its_farm_is_heard(grange):
+    grange.set_granges([entry("alice")])
+    src, clock = source(grange)
+    src.poll_api()
+    clock.tick(10)
+    grange.set_granges([entry("alice"), entry("carol", farm=None, agents=0)])
+    src.poll_api()
+    snap = src.snapshot()
+    assert kinds(snap) == [("join", "carol")] and snap.farm_news == [], "on the board; her farm not heard yet"
+    clock.tick(9)
+    grange.set_granges([entry("alice"), entry("carol", agents=4)])
+    src.poll_api()
+    assert [(c.grange, c.kind, c.agents, c.note) for c in src.snapshot().farm_news] == [("carol", "on", 4, "first record")]
+
+
+def test_the_farm_news_stops_ageing_while_nothing_answers(grange):
+    grange.set_granges([entry("alice", agents=1)])
+    src, clock = source(grange)
+    src.poll_api()
+    grange.set_granges([entry("alice", agents=2)])
+    src.poll_api()
+    clock.tick(4)
+    src._lost()
+    clock.tick(30)
+    snap = src.snapshot()
+    assert not snap.reachable and [c.age for c in snap.farm_news] == pytest.approx([4])
+    assert snap.farm_watched == pytest.approx(4) and len(snap.farms["alice"]) == 2, "the last picture, as it froze"
+
+
+def test_an_agent_reported_without_a_name_or_a_state_does_not_break_the_reading(grange):
+    grange.set_granges([{**entry("alice"), "agents": [{"owner": "alice"}, {"name": 7, "state": None}, "junk"]}])
+    src, _ = source(grange)
+    assert src.poll_api()
+    assert [(a.name, a.state) for a in src.snapshot().farms["alice"]] == [("?", "?"), ("7", "?")]
+
+
+def test_two_agents_reported_without_a_name_are_told_apart_by_what_they_do(grange):
+    """Each reads "?", so they share a name. The busy one ending is the busy one ending."""
+    def alice(*states):
+        return {**entry("alice"), "agents": [{"owner": "alice", "state": state} for state in states]}
+    grange.set_granges([alice("busy", "idle")])
+    src, clock = source(grange)
+    src.poll_api()
+    clock.tick(2)
+    grange.set_granges([alice("idle")])
+    src.poll_api()
+    assert told(src.snapshot()) == [("alice", "ended", "?", "busy", "")]
+
+
+def test_names_and_states_come_in_as_one_line_with_no_control_character(grange):
+    """They were typed on somebody else's Mac and are drawn on this one's terminal. A line
+    break would split a row of the pane; an escape sequence would be an order to the terminal."""
+    grange.set_granges([entry("alice", agents=[("line one\nline two", "busy"),
+                                               ("red\x1b]0;owned\x07 name", "id\x1b[31mle"),
+                                               ("\x1b\x07", "\n")])])
+    src, clock = source(grange)
+    src.poll_api()
+    assert [(a.name, a.state) for a in src.snapshot().farms["alice"]] == [
+        ("line one line two", "busy"), ("red]0;owned name", "id[31mle"), ("?", "?")]
+    clock.tick(2)
+    grange.set_granges([entry("alice", agents=[("line one\nline two", "wait\x1bing"),
+                                               ("red\x1b]0;owned\x07 name", "id\x1b[31mle"), ("\x1b\x07", "\n")])])
+    src.poll_api()
+    assert told(src.snapshot()) == [("alice", "state", "line one line two", "busy", "waiting")], "the news likewise"
 
 
 def test_a_corrected_incarnation_is_not_a_restart(grange):

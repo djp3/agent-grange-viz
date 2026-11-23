@@ -222,13 +222,15 @@ exchange outcomes), nor rev and counter, and it cannot tell the "no socket" stat
 
 | app | owns | the viewer shows instead |
 |---|---|---|
-| agent-farm | each session's state, subagents, shells, plan usage | nothing about sessions |
+| agent-farm | each session's state, subagents, shells, plan usage | what each farm reported as it arrived: an agent's name and state, and that it changed. Nothing else about a session |
 | agent-frolic | agents on pull requests, who each PR waits on | nothing about PRs |
-| agent-grange | the board JSON: agents by grange | an agent **count** per grange at most |
+| agent-grange | the board JSON: agents by grange | an agent **count** per grange in the Stack; the board's changes in the farm news |
 
 Whatever the viewer shows is about the plane: who is reachable, by what path, how fresh each
 record is, what was exchanged, what was refused, and whether changes travel within the
-targets (R6.14: 5 s; R6.15: 10 KB/s).
+targets (R6.14: 5 s; R6.15: 10 KB/s). The farm news is the one place it shows what the plane
+carried: each farm's agents by name and state, read from `/v1/agents` (the route frolic
+reads), and what changed from one answer to the next. It asks the grange for nothing new.
 
 ## 7. What one Mac can and cannot know
 

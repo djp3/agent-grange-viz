@@ -9,6 +9,11 @@ It passes on only what a real grange, its sidecar and Docker could know: the Sim
 records, forget map, counters and events. It never reads sim.team, the truth about every
 grange, so a closed lid shows as timeouts and a stale image as 503s, not as their cause.
 
+The farm news comes the way the live source gets it: whenever the board's cursor has moved,
+the board (this grange's agents and those in each record held) is compared with the one
+before (farms.py). That happens as the simulation plays, so a demo started 100 s into the
+loop already has 100 s of news.
+
     source = DemoSource()          # 100 s into the loop, so there is history to draw
     source.start()                 # from now on it moves with the wall clock
     source.snapshot()              # cheap; advances the simulation by the time gone by
@@ -31,7 +36,8 @@ from collections import deque
 from typing import Callable, Optional
 
 from demosim import DISCOVERY_S, FORGET_S, LOOP, ME, START, Ev, Link, Sim
-from model import (DEFAULT_PORT, Docker, Event, Gone, Gossip, Me, Peer, Record, Sidecar,
+from farms import Watch
+from model import (DEFAULT_PORT, Agent, Docker, Event, Gone, Gossip, Me, Peer, Record, Sidecar,
                    Snapshot, Tailnet)
 
 KEPT = ("join", "restart", "readmit", "expire", "leave", "path", "refused", "sidecar", "mark")
@@ -40,6 +46,9 @@ BACK_S = 60.0                    # how long a restart, readmit or join counts as
 MAX_STEP = 5.0                   # the most wall-clock time one snapshot() makes up for
 FAILED = ("push-out", "repair-out", "probe", "mark")
 BACK = ("restart", "readmit", "join")
+REFILL_S = 5.0                   # after this grange restarts, the board refilling is not news
+WHY = {"leave": "left", "expire": "expired", "join": "first record", "readmit": "back on the board",
+       "restart": "back after a restart"}
 GROUP = re.compile(r"group '([^']+)'")
 SIDECAR_NAME, GRANGE_NAME = "agent-grange-tailscale-1", "agent-grange-grange-1"
 
@@ -68,6 +77,9 @@ class DemoSource:
         self._group: dict = {}                   # peer -> the group its refusals named
         self._failed_refresh: set = set()        # discovery refreshes the sidecar did not answer
         self._up_at = -3600.0                    # when the containers last came up
+        self._farms = Watch()                    # what the farms say, one board against the next
+        self._looked: Optional[tuple] = None     # (incarnation, cursor) of the board last compared
+        self._quiet_until = -1.0                 # the board is refilling until then
         self.sim.listeners.append(self._heard)
         self.sim.advance(float(start))
 
@@ -131,6 +143,24 @@ class DemoSource:
         found = GROUP.search(ev.note)
         if found and (ev.kind == "refused" or not ev.ok):
             self._group[ev.peer] = found.group(1)
+        if ev.kind == "restart" and ev.peer == ME:   # the board started over: its agents did not end
+            self._farms.forget()
+            self._quiet_until = ev.t + REFILL_S
+        self._look()
+
+    def _look(self) -> None:
+        """Compare the board with the last one looked at, when its cursor has moved: what a
+        viewer long-polling GET /v1/agents would be handed. While nothing answers, nothing is."""
+        sim, me = self.sim, self.sim.me
+        at = (me.incarnation, me.cursor)
+        if sim.down or at == self._looked:
+            return
+        self._looked = at
+        board = {me.gid: me.roster, **{gid: rec.roster for gid, rec in sim.records.items()}}
+        why = {gid: WHY[ev.kind] for index in (self._back, self._gone) for gid, ev in index.items()
+               if (gid in board) == (index is self._back) and sim.now - ev.t < 1.0}    # said as it happened
+        self._farms.take({gid: [Agent(name, state) for name, state in roster] for gid, roster in board.items()},
+                         sim.now, quiet=sim.now < self._quiet_until, why=why)
 
     def _latest(self, index: dict, link: Link) -> Optional[Ev]:
         """The newest indexed event filed under the link's id or its address."""
@@ -144,6 +174,7 @@ class DemoSource:
         since = None if me.sidecar_since is None else now - me.sidecar_since
         while self._events and now - self._events[0].t > WINDOW:
             self._events.popleft()
+        self._look()
 
         known = set()
         for link in sim.links.values():
@@ -160,6 +191,8 @@ class DemoSource:
             me=self._me(), sidecar=self._sidecar(since),
             peers=[self._peer(link) for link in sim.links.values()],
             events=events, strangers=list(strangers.values()),
+            farms=self._farms.board(), farm_news=self._farms.news(now),
+            farm_watched=None if self._farms.since is None else now - self._farms.since,
             docker=Docker(available=True, sidecar=SIDECAR_NAME,
                           sidecar_state="exited" if down else "running",
                           sidecar_for=since if down else now - self._up_at,

@@ -233,6 +233,87 @@ def test_the_copied_simulation_still_plays_the_mock_ups_events():
                                    "kenji", "mira", "tobias"]
 
 
+def test_naming_the_agents_changes_none_of_the_events(monkeypatch):
+    """Who the agents are is made up from a generator of its own. With the naming taken out
+    the same seed plays the same events, to the last exchange."""
+    named = demosim.Sim()
+    named.advance(500.0)
+    monkeypatch.setattr(demosim.Sim, "_farm_says", lambda self, roster, agents: None)
+    monkeypatch.setattr(demosim.Sim, "_session", lambda self: "")
+    plain = demosim.Sim()
+    plain.advance(500.0)
+    assert [dataclasses.astuple(e) for e in named.events] == [dataclasses.astuple(e) for e in plain.events]
+    assert named.rng.getstate() == plain.rng.getstate() and named.me.cursor == plain.me.cursor
+
+
+# --------------------------------------------------------------------------------- the farms
+KINDS = {"started", "ended", "state", "on", "off"}
+
+
+def test_the_board_names_as_many_agents_as_each_record_counts():
+    source = DemoSource(start=0)
+    for _ in range(0, 485, 5):
+        snap = source.snapshot()
+        named = {gid: len(agents) for gid, agents in snap.farms.items()}
+        assert named == {**{gid: rec.agents for gid, rec in source.sim.records.items()}, "djp3": snap.me.agents}
+        # every column with a record is among them (carol's record arrives before her address is discovered)
+        assert {p.name: p.record.agents for p in snap.peers if p.record is not None}.items() <= named.items()
+        for agents in snap.farms.values():
+            assert all(a.name and a.state in demosim.STATES for a in agents)
+            assert len({a.name for a in agents}) == len(agents)
+        ages = [c.age for c in snap.farm_news]
+        assert ages == sorted(ages, reverse=True) and all(c.kind in KINDS for c in snap.farm_news)
+        source.advance(5)
+
+
+def test_a_demo_started_into_the_loop_already_has_its_farm_news():
+    snap = at(100)
+    assert snap.farm_watched == pytest.approx(100, abs=1) and len(snap.farm_news) > 10
+    assert {c.kind for c in snap.farm_news} >= {"started", "ended", "state"}
+    assert any(c.grange == "djp3" for c in snap.farm_news), "this Mac's own farm reports too"
+    carol = [c for c in snap.farm_news if c.grange == "carol"]
+    assert [(c.kind, c.agents, c.note) for c in carol[:1]] == [("on", 2, "first record")]
+    frank = [c for c in at(165).farm_news if c.grange == "frank"][-1]
+    assert (frank.kind, frank.agents, frank.note) == ("off", 3, "expired"), "his lid is closed: his agents go with his record"
+
+
+def test_every_change_in_the_news_is_one_the_board_shows():
+    """Played forward from the start, the news accounts for the board: who started, ended and
+    changed state adds up to who is there now."""
+    source = DemoSource(start=0)
+    held = {gid: {a.name: a.state for a in agents} for gid, agents in source.snapshot().farms.items()}
+    source.advance(190)                                  # up to just before this grange goes down
+    snap = source.snapshot()
+    assert len(snap.farm_news) < 200, "nothing has been dropped yet"
+    for c in snap.farm_news:
+        if c.kind == "off":
+            assert len(held.pop(c.grange)) == c.agents
+        elif c.kind == "on":
+            held[c.grange] = None                        # its agents came with it, unnamed in the news
+        elif held.get(c.grange) is not None:
+            farm = held[c.grange]
+            if c.kind == "started":
+                assert c.name not in farm
+                farm[c.name] = c.after
+            elif c.kind == "ended":
+                assert farm.pop(c.name) == c.before
+            else:
+                assert farm[c.name] == c.before and c.before != c.after
+                farm[c.name] = c.after
+    for gid, farm in held.items():
+        if farm is not None:
+            assert farm == {a.name: a.state for a in snap.farms[gid]}, gid
+
+
+def test_this_grange_restarting_is_not_farm_news():
+    """make up at 211: the board starts over and refills. Nobody's agents ended or started."""
+    before = at(195).farm_news
+    after = at(216).farm_news
+    assert len(after) >= len(before)
+    assert [c for c in after if c.age < 5 and c.kind in ("on", "off")] == []
+    assert not any(c.kind == "off" and 3 < c.age < 21 for c in after), "nor did the board empty when it went down"
+
+
 def test_it_never_reads_the_truth_about_other_granges():
     code = open(demo.__file__).read().replace(demo.__doc__, "")
     assert ".team" not in code

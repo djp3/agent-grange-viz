@@ -21,7 +21,7 @@ for pkg in ("textual", "rich"):
 # The app's own modules lie flat beside main.py. PyInstaller finds the ones main.py imports,
 # wherever the import is written; naming every module that is there as well means one that
 # is only ever reached by its name in a string (a source chosen at run time) is not left out.
-OURS = ("apppaths", "settings", "model", "theme", "fmt", "stack", "panels",
+OURS = ("apppaths", "settings", "model", "theme", "fmt", "stack", "panels", "news", "farms",
         "grangeapi", "sidecar", "live", "demo", "demosim")
 hiddenimports += [name for name in OURS if os.path.exists(os.path.join(ROOT, name + ".py"))]
 
