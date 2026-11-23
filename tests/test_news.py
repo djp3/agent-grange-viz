@@ -129,6 +129,41 @@ def test_a_long_name_is_cut_and_a_long_grange_id_too():
     assert "lights…" in line and "x" * 39 + "…" in line and "x" * 40 not in line and line.rstrip().endswith("started · busy")
 
 
+# ---- widths are terminal cells, not characters -------------------------------------------------------
+WIDE = "修正テスト"                                    # five characters, ten cells
+
+
+def test_a_name_in_wide_characters_is_cut_so_that_what_happened_stays_on_its_row():
+    """Forty characters of Japanese are eighty cells. Counted as forty they were not cut, the
+    row ran past the pane, and what was trimmed off was what happened."""
+    from rich.cells import cell_len
+    change = FarmChange(3.0, "alice", "state", name=WIDE * 8, before="busy", after="waiting")
+    line = news.draw(snap_with([change]), "", None, 100, 4)[1].plain
+    assert cell_len(line) <= 100 and line.rstrip().endswith("busy → waiting for its human")
+    assert WIDE * 4 not in line and "…" in line, "the name gave way, to the forty cells a name may have"
+
+
+def test_rows_with_wide_and_plain_names_line_up():
+    from rich.cells import cell_len
+    changes = [FarmChange(9.0, "alice", "started", name=WIDE, after="busy"),
+               FarmChange(6.0, "東京支社のグレンジ", "started", name="pr-7 docs 🐓", after="busy"),
+               FarmChange(3.0, "bob", "started", name="pr-8 plain text", after="busy")]
+    lines = [t.plain for t in news.draw(snap_with(changes), "", None, 100, 6)[1:]]
+    assert len({cell_len(line[:line.index("started")]) for line in lines}) == 1, lines
+    assert len({cell_len(line[:line.index("+ ")]) for line in lines}) == 1, "the grange's name is a field too"
+    assert "東京支…" in lines[1] and "東京支社" not in lines[1], "seven cells of it: three characters and the …"
+
+
+def test_a_wide_character_is_never_cut_through():
+    from rich.cells import cell_len
+    for width in range(1, 12):
+        cut = news._cut(WIDE, width)
+        assert cell_len(cut) <= width and all(ch in WIDE + "…" for ch in cut), (width, cut)
+        assert cut == WIDE or cut.endswith("…")
+    assert news._cut(WIDE, 10) == WIDE and news._cut(WIDE, 9) == "修正テス…" and news._cut(WIDE, 4) == "修…"
+    assert news._field("ab", 4) == "ab   " and cell_len(news._field(WIDE, 6)) == 7
+
+
 def test_a_grange_id_is_drawn_as_one_line_with_no_control_character():
     """An agent's name is cleaned where it comes in (live.py). A grange's id is drawn in the
     pane as it stands in the Snapshot, so the pane cleans that one itself."""

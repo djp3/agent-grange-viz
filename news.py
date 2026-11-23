@@ -29,6 +29,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+from rich.cells import cell_len, set_cell_size
 from rich.text import Text
 
 from fmt import age, one_line, short_age
@@ -37,6 +38,8 @@ from stack import GRANGE_DOWN
 from theme import GOOD, INK, INK2, MUTED, WAITING
 
 ORDER = {"waiting": 0, "busy": 1, "idle": 2}     # agent-farm's tiers: who needs someone comes first
+# Every width here is in terminal cells, not characters: a character of Chinese, Japanese or
+# Korean, and most emoji, take two. A name is measured, cut and padded by what it takes on screen.
 COLUMN = 72                                      # a column of changes is at least this wide
 SAID = 28                                        # room for "busy → waiting for its human"
 NAME = 40                                        # the most of an agent's name that is shown
@@ -72,7 +75,17 @@ def said(c: FarmChange, mine: bool) -> str:
 
 
 def _cut(text: str, width: int) -> str:
-    return text if len(text) <= width else text[:max(0, width - 1)] + "…"
+    """`text` in at most `width` cells, ending in … where it was cut. A character two cells
+    wide is left out whole, never cut through."""
+    if cell_len(text) <= width:
+        return text
+    return set_cell_size(text, max(0, width - 1)).rstrip() + "…"
+
+
+def _field(text: str, width: int) -> str:
+    """`text` cut to `width` cells and padded to one more: a field, and the gap after it."""
+    cut = _cut(text, width)
+    return cut + " " * (width + 1 - cell_len(cut))
 
 
 def line(c: FarmChange, me: str, who: bool, name_w: int) -> Text:
@@ -82,13 +95,13 @@ def line(c: FarmChange, me: str, who: bool, name_w: int) -> Text:
     t = Text(no_wrap=True)
     t.append(f"{short_age(c.age):>4}  ", style=MUTED)
     if who:
-        t.append(f"{'you' if mine else _cut(one_line(c.grange), WHO):<{WHO + 1}}", style=INK2)
+        t.append(_field("you" if mine else one_line(c.grange), WHO), style=INK2)
     t.append(f"{mark} ", style=style)
     if c.kind in ("on", "off"):
         t.append(said(c, mine), style=INK2 if c.kind == "on" else MUTED)
     else:
         gone = c.kind == "ended"
-        t.append(f"{_cut(c.name, name_w):<{name_w + 1}}", style=INK2 if gone else INK)
+        t.append(_field(c.name, name_w), style=INK2 if gone else INK)
         t.append(said(c, mine), style=MUTED if gone else INK2)
     return t
 
@@ -157,7 +170,7 @@ def draw(snap: Snapshot, label: str, gid: Optional[str], w: int, h: int) -> list
     each = w // across
     shown = changes[:rows * across]
     fixed = 6 + (WHO + 1 if gid is None else 0) + 2 + 1          # age, whose, mark, the gap after the name
-    longest = max((len(c.name) for c in shown), default=0)       # no wider than the names in view need
+    longest = max((cell_len(c.name) for c in shown), default=0)  # no wider than the names in view need
     name_w = max(12, min(longest, NAME, each - 2 - fixed - SAID))
     cells = [line(c, me, gid is None, name_w) for c in shown]
     for row in range(min(rows, len(cells))):
