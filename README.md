@@ -168,9 +168,12 @@ first, and then its own changes. A window wide enough shows the news in two or t
 read downward.
 
 The grange keeps no history, so the news starts when the app does: it is what changed from
-one answer of `GET /v1/agents` to the next while the app was open. When your grange restarts,
-the board filling up again is not news. While it is not running the pane shows no agents at
-all, like the rows above it. A long diagnosis takes the rows it needs first.
+one answer of `GET /v1/agents` to the next while the app was open. A grange that restarts,
+yours or a teammate's, ends and starts nobody: until its farm reports again, what that farm
+says is not known, and only what really changed meanwhile is news. A grange that joins is
+told when its farm is first heard, with its agents. While your grange is not running the pane
+shows no agents at all, like the rows above it. A long diagnosis takes the rows it needs
+first.
 
 ### The verdicts
 

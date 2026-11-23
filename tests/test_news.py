@@ -96,6 +96,13 @@ def test_a_grange_with_no_record_and_a_farm_with_no_agents_say_so():
         "alice's farm  reports no agents", "  it has reported no change in the 1m30 this viewer has been watching"]
 
 
+def test_a_farm_that_has_not_reported_is_not_known_which_is_not_nobody():
+    """Her grange has just restarted: its record lists no agents because it has heard nothing."""
+    lines = plain(news.draw(snap_with(CHANGES, {"alice": None}), "alice", "alice", 120, 6))
+    assert lines[0] == "alice's farm  not known: it has not reported since its grange started"
+    assert "pr-7 docs" in lines[1], "what it reported before is still its news"
+
+
 def test_no_news_says_for_how_long_it_has_been_watching():
     assert plain(news.draw(snap_with(watched=12.0), "", None, 120, 6))[1] == \
         "  no farm has reported a change in the 12s this viewer has been watching"

@@ -33,7 +33,9 @@ and a sidecar that changes state, are events too. Events are kept five minutes.
 The farm news is worked out the same way. Every answer of /v1/agents is the whole board, each
 grange's agents by name and state, so one answer is compared with the next (farms.py): an
 agent that started, one that ended, one whose state changed, a grange that came onto the
-board or went off it. Only what changed while this source was reading is known.
+board or went off it. Only what changed while this source was reading is known. A grange that
+has just started lists its farm with no agents and no farm age until the farm next pushes:
+that farm has not reported, which is not the same as having nobody, and is handed on as None.
 
 snapshot() only reads what the threads cached and works every age out as of now, so ages tick
 between reads. When nothing answers, the last picture is kept and its ages stop where they
@@ -322,13 +324,20 @@ class LiveSource:
                             f"seen {seen_age + (now - at):.0f}s ago" if kind == "expired" else "its record was withdrawn")
             for gid, g in present.items():
                 self._seen[gid] = (float(g.get("seen_age_s") or 0.0), now)
-            self._farms.take({g.get("grange"): [Agent(str(a.get("name") or "?"), str(a.get("state") or "?"))
-                                                for a in g.get("agents") or () if isinstance(a, dict)]
-                              for g in body.get("granges") or () if g.get("grange")},
-                             now, quiet=quiet, why=why)
+            self._farms.take({g.get("grange"): self._reported(g) for g in body.get("granges") or ()
+                              if g.get("grange")}, now, quiet=quiet, why=why)
             self._picture, self._picture_at = body, now
             self._cursor, self._incarnation = cursor, incarnation
             return restarted
+
+    @staticmethod
+    def _reported(g: dict) -> Optional[list]:
+        """A grange's agents as its farm last reported them; None while its farm never has
+        (no farm age): the list is empty then because nothing is known, not because nobody is there."""
+        if g.get("farm_age_s") is None:
+            return None
+        return [Agent(str(a.get("name") or "?"), str(a.get("state") or "?"))
+                for a in g.get("agents") or () if isinstance(a, dict)]
 
     # ------------------------------------------------------------------ one round of the sidecar
     def poll_sidecar(self) -> bool:

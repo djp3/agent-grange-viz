@@ -69,27 +69,87 @@ def test_two_sessions_under_one_name_are_still_two():
     assert told(watch)[1:] == [("alice", "state", "task", "busy", "waiting"), ("alice", "started", "task", "", "busy")]
 
 
-def test_while_the_board_refills_nothing_is_news():
+def test_while_the_board_refills_nobody_comes_or_goes():
     watch = Watch()
     watch.take(board(alice=["a:busy"], bob=["b:busy"]), now=0.0)
     watch.forget()                                       # the grange restarted: the board starts over
     assert watch.board() == {}
     watch.take(board(), now=20.0, quiet=True)
-    watch.take(board(alice=["a:idle"]), now=21.0, quiet=True)
-    watch.take(board(alice=["a:idle"], bob=["b:busy"]), now=22.0, quiet=True)
-    assert watch.news(22.0) == [], "bob did not leave, alice's agent did not change: nobody was told either"
-    watch.take(board(alice=["a:busy"], bob=["b:busy"]), now=30.0)
-    assert told(watch) == [("alice", "state", "a", "idle", "busy")], "from there on it is news again"
+    watch.take(board(alice=["a:busy"]), now=21.0, quiet=True)
+    watch.take(board(alice=["a:busy"], bob=["b:busy"], dave=["d:idle"]), now=22.0, quiet=True)
+    assert watch.news(22.0) == [], "bob did not leave and come back, and dave, new here, is where his farm starts"
+    watch.take(board(alice=["a:busy"], bob=["b:busy"], dave=["d:idle"], erin=["e:busy"]), now=30.0)
+    assert [(c.grange, c.kind, c.agents) for c in watch.news(30.0)] == [("erin", "on", 1)], "from there on it is news"
     assert watch.since == 0.0, "and it has been watching since the first board"
 
 
-def test_forgetting_keeps_what_already_happened():
+def test_a_grange_that_is_slow_to_come_back_after_the_restart_did_not_come_onto_the_board():
+    """The refill is quiet for a few seconds; a record can take longer. What its farm said
+    before the restart is still known, so there is nothing to tell."""
+    watch = Watch()
+    watch.take(board(alice=["a:busy"], bob=["b:busy"]), now=0.0)
+    watch.forget()
+    watch.take(board(alice=["a:busy"]), now=20.0, quiet=True)
+    watch.take(board(alice=["a:busy"], bob=["b:busy"]), now=45.0)        # long after the quiet
+    assert watch.news(45.0) == []
+
+
+def test_what_really_changed_while_this_grange_was_down_is_told_when_it_is_heard_again():
+    watch = Watch()
+    watch.take(board(alice=["a:busy", "b:idle"]), now=0.0)
+    watch.take(board(alice=["a:idle", "b:idle"]), now=1.0)
+    watch.forget()
+    watch.take(board(alice=["a:idle"]), now=20.0, quiet=True)            # b ended while it was down
+    assert told(watch) == [("alice", "state", "a", "busy", "idle"), ("alice", "ended", "b", "idle", "")]
+    assert [c.age for c in watch.news(20.0)] == [19.0, 0.0], "what already happened is still what happened"
+
+
+# ---- a farm that has not reported is not a farm with nobody in it -----------------------------------
+def test_a_farm_that_has_not_reported_changes_nothing():
+    """A teammate's grange restarts: its record comes with no agents and no farm age, and a
+    few seconds later its farm reports the same agents again. Nobody ended, nobody started."""
+    watch = Watch()
+    watch.take(board(alice=["a:busy", "b:idle"]), now=0.0)
+    watch.take({"alice": None}, now=5.0)
+    assert watch.news(5.0) == [] and watch.board() == {"alice": None}
+    watch.take(board(alice=["a:busy", "b:idle"]), now=12.0)
+    assert watch.news(12.0) == []
+    watch.take({"alice": None}, now=20.0)
+    watch.take(board(alice=["a:waiting"]), now=28.0)     # this time something did change meanwhile
+    assert told(watch) == [("alice", "state", "a", "busy", "waiting"), ("alice", "ended", "b", "idle", "")]
+
+
+def test_the_first_report_of_a_farm_never_heard_is_where_it_starts():
+    """The viewer opens a moment after the grange did: its own farm has not pushed yet."""
+    watch = Watch()
+    watch.take({"me": None, "alice": None}, now=0.0)
+    watch.take({"me": [Agent("x", "busy"), Agent("y", "idle")], "alice": None}, now=20.0)
+    watch.take(board(me=["x:busy", "y:idle"], alice=["a:busy"]), now=25.0)
+    assert watch.news(25.0) == [], "nobody started: they were there before anyone was told"
+    watch.take(board(me=["x:waiting", "y:idle"], alice=["a:busy"]), now=30.0)
+    assert told(watch) == [("me", "state", "x", "busy", "waiting")]
+
+
+def test_a_grange_that_comes_onto_the_board_is_told_when_its_farm_is_first_heard():
     watch = Watch()
     watch.take(board(alice=["a:busy"]), now=0.0)
-    watch.take(board(alice=["a:idle"]), now=1.0)
-    watch.forget()
-    watch.take(board(alice=["a:waiting"]), now=2.0)      # the first board after: where it starts again
-    assert told(watch) == [("alice", "state", "a", "busy", "idle")]
+    watch.take({**board(alice=["a:busy"]), "carol": None}, now=5.0, why={"carol": "first record"})
+    assert watch.news(5.0) == [], "her grange is there; what her farm says is not known yet"
+    watch.take(board(alice=["a:busy"], carol=["x:idle", "y:idle"]), now=14.0)
+    assert [(c.grange, c.kind, c.agents, c.note, c.age) for c in watch.news(14.0)] == [
+        ("carol", "on", 2, "first record", 0.0)], "one line, with her agents, and how she came"
+    watch.take(board(alice=["a:busy"]), now=20.0, why={"carol": "left"})
+    watch.take({**board(alice=["a:busy"]), "carol": None}, now=30.0, why={"carol": "back on the board"})
+    watch.take(board(alice=["a:busy"], carol=["x:idle"]), now=41.0)
+    assert [(c.kind, c.agents, c.note) for c in watch.news(41.0)][1:] == [("off", 2, "left"), ("on", 1, "back on the board")]
+
+
+def test_a_grange_whose_farm_was_never_heard_goes_without_a_word():
+    watch = Watch()
+    watch.take(board(alice=["a:busy"]), now=0.0)
+    watch.take({**board(alice=["a:busy"]), "carol": None}, now=5.0)
+    watch.take(board(alice=["a:busy"]), now=9.0, why={"carol": "left"})
+    assert watch.news(9.0) == [], "no agents of hers were ever on the board to go off it"
 
 
 def test_only_the_newest_changes_are_kept():

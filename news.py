@@ -100,12 +100,16 @@ def _title(title: str, subtitle: str) -> Text:
     return t
 
 
-def _now(label: str, agents: Optional[list], mine: bool, w: int) -> Text:
+def _now(label: str, farms: dict, gid: str, mine: bool, w: int) -> Text:
     """One grange's title: its agents now, those waiting first, as many as the line holds."""
     t = Text(no_wrap=True)
     t.append(f"{label}'s farm", style=f"bold {INK2}")
-    if agents is None:
+    if gid not in farms:
         t.append("  not on the board: your grange holds no record of it", style=MUTED)
+        return t
+    agents = farms[gid]
+    if agents is None:                                # None is not known, never nobody
+        t.append("  not known: it has not reported since its grange started", style=MUTED)
         return t
     if not agents:
         t.append("  reports no agents", style=MUTED)
@@ -138,7 +142,7 @@ def draw(snap: Snapshot, label: str, gid: Optional[str], w: int, h: int) -> list
         head = _title("farm news", "what each grange's farm reported · newest first · ← → picks one grange")
         changes = snap.farm_news[::-1]
     else:
-        head = _now(label, snap.farms.get(gid), False, w)
+        head = _now(label, snap.farms, gid, False, w)
         changes = [c for c in reversed(snap.farm_news) if c.grange == gid]
     head.truncate(w, overflow="ellipsis")
     out = [head]
