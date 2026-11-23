@@ -35,6 +35,12 @@ where the viewer knew what was there before:
     refilled, so nobody is told to have come or gone meanwhile; what each farm last said
     is still known, and what really changed while it was down is told as it is heard again.
 
+Agents are known by name. Where a farm reports two sessions under one name, they are told
+apart by what they are doing, not by where they stand in the list: one that has the name and
+the state of one in the last report is that one, unchanged, and only what is left over is
+news. So the order a farm lists its agents in is never news by itself (a grange does not
+count a reorder as a change either).
+
 It only knows what changed while it was being handed answers: nothing here asks a grange for
 its history, because there is none to ask for.
 """
@@ -48,15 +54,11 @@ from model import FarmChange
 KEPT = 200                               # the most changes remembered; the oldest go first
 
 
-def _named(agents: Iterable) -> dict:
-    """Each agent under its name and how many of that name came before it, so two sessions a
-    farm reports under one name are still two."""
-    seen: dict = {}
-    out = {}
+def _by_name(agents: Iterable) -> dict:
+    """name -> the states of the sessions reported under it, in the order they came."""
+    out: dict = {}
     for agent in agents:
-        nth = seen.get(agent.name, 0)
-        seen[agent.name] = nth + 1
-        out[(agent.name, nth)] = agent
+        out.setdefault(agent.name, []).append(agent.state)
     return out
 
 
@@ -109,15 +111,23 @@ class Watch:
         """One farm's report against its last one."""
         if before == after:
             return
-        was, now_is = _named(before), _named(after)
-        for key, agent in now_is.items():
-            if key not in was:
-                self._add(now, gid, "started", name=agent.name, after=agent.state)
-            elif was[key].state != agent.state:
-                self._add(now, gid, "state", name=agent.name, before=was[key].state, after=agent.state)
-        for key, agent in was.items():
-            if key not in now_is:
-                self._add(now, gid, "ended", name=agent.name, before=agent.state)
+        was, now_is = _by_name(before), _by_name(after)
+        gone = {}                                    # name -> the states of those that ended
+        for name, states in now_is.items():
+            old, new = list(was.get(name, ())), []
+            for state in states:                     # the same name doing the same thing: that one, unchanged
+                if state in old:
+                    old.remove(state)
+                else:
+                    new.append(state)
+            for then, state in zip(old, new):        # what is left over on both sides changed state
+                self._add(now, gid, "state", name=name, before=then, after=state)
+            for state in new[len(old):]:
+                self._add(now, gid, "started", name=name, after=state)
+            gone[name] = old[len(new):]
+        for name, states in was.items():
+            for state in gone.get(name, states):     # a name in neither: every one of them ended
+                self._add(now, gid, "ended", name=name, before=state)
 
     def _add(self, at: float, gid: str, kind: str, **what) -> None:
         self._changes.append((at, FarmChange(0.0, gid, kind, **what)))

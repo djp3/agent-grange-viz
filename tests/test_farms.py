@@ -60,13 +60,43 @@ def test_a_farm_that_reports_nobody_is_still_on_the_board():
     assert watch.board() == {"alice": []}
 
 
-def test_two_sessions_under_one_name_are_still_two():
+# ---- two sessions under one name are told apart by what they are doing -----------------------------
+def after(before: list, now: list) -> list:
+    """What is told when one farm's report goes from `before` to `now`."""
     watch = Watch()
-    watch.take(board(alice=["task:busy", "task:idle"]), now=0.0)
-    watch.take(board(alice=["task:busy"]), now=1.0)
-    assert told(watch) == [("alice", "ended", "task", "idle", "")]
-    watch.take(board(alice=["task:waiting", "task:busy"]), now=2.0)
-    assert told(watch)[1:] == [("alice", "state", "task", "busy", "waiting"), ("alice", "started", "task", "", "busy")]
+    watch.take(board(alice=before), now=0.0)
+    watch.take(board(alice=now), now=1.0)
+    return [(c.kind, c.name, c.before, c.after) for c in watch.news(1.0)]
+
+
+def test_two_sessions_under_one_name_are_still_two():
+    assert after(["task:busy", "task:idle"], ["task:busy"]) == [("ended", "task", "idle", "")]
+    assert after(["task:busy"], ["task:waiting", "task:busy"]) == [("started", "task", "", "waiting")], \
+        "the busy one is the one that was busy: the other is new"
+
+
+def test_the_first_of_two_under_one_name_ending_is_that_one_ending():
+    """Paired by where they stood in the list, the idle one took the busy one's place: it read
+    "busy → idle" and "ended · was idle". One thing happened."""
+    assert after(["task:busy", "task:idle"], ["task:idle"]) == [("ended", "task", "busy", "")]
+
+
+def test_the_order_a_farm_lists_its_agents_in_is_not_news():
+    assert after(["task:busy", "task:idle"], ["task:idle", "task:busy"]) == []
+    assert after(["a:busy", "b:idle", "c:waiting"], ["c:waiting", "a:busy", "b:idle"]) == []
+    assert after(["task:busy", "x:idle", "task:idle"], ["task:idle", "task:busy", "x:busy"]) == [
+        ("state", "x", "idle", "busy")], "and what did change beside a reorder is still told"
+
+
+def test_what_is_left_over_under_a_name_is_what_changed():
+    assert after(["task:busy", "task:idle"], ["task:waiting", "task:idle"]) == [("state", "task", "busy", "waiting")]
+    assert after(["task:busy", "task:idle"], ["task:waiting", "task:waiting"]) == [
+        ("state", "task", "busy", "waiting"), ("state", "task", "idle", "waiting")]
+    assert after(["task:busy", "task:busy", "task:idle"], ["task:busy", "task:waiting"]) == [
+        ("state", "task", "busy", "waiting"), ("ended", "task", "idle", "")], "one stayed, one changed, one ended"
+    assert after(["task:idle"], ["task:busy", "task:busy", "task:idle"]) == [
+        ("started", "task", "", "busy"), ("started", "task", "", "busy")]
+    assert after(["task:busy", "task:idle"], []) == [("ended", "task", "busy", ""), ("ended", "task", "idle", "")]
 
 
 def test_while_the_board_refills_nobody_comes_or_goes():

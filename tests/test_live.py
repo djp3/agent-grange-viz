@@ -527,6 +527,19 @@ def test_an_agent_reported_without_a_name_or_a_state_does_not_break_the_reading(
     assert [(a.name, a.state) for a in src.snapshot().farms["alice"]] == [("?", "?"), ("7", "?")]
 
 
+def test_two_agents_reported_without_a_name_are_told_apart_by_what_they_do(grange):
+    """Each reads "?", so they share a name. The busy one ending is the busy one ending."""
+    def alice(*states):
+        return {**entry("alice"), "agents": [{"owner": "alice", "state": state} for state in states]}
+    grange.set_granges([alice("busy", "idle")])
+    src, clock = source(grange)
+    src.poll_api()
+    clock.tick(2)
+    grange.set_granges([alice("idle")])
+    src.poll_api()
+    assert told(src.snapshot()) == [("alice", "ended", "?", "busy", "")]
+
+
 def test_names_and_states_come_in_as_one_line_with_no_control_character(grange):
     """They were typed on somebody else's Mac and are drawn on this one's terminal. A line
     break would split a row of the pane; an escape sequence would be an order to the terminal."""
