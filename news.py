@@ -22,8 +22,12 @@ your own farm, since yellow means one thing in this app: yours to act on, on thi
 
 `draw` is a function of a model.Snapshot, the column picked and a size; main.py's window puts
 it in a panels.Panel. It draws what Snapshot.farms and Snapshot.farm_news hold and works
-nothing out, and it draws neither while the grange refuses every request: nothing keeps up
-what it said before.
+nothing out. It draws neither where there is no board to draw from, and says "not known"
+instead of "no news" or "no record of it":
+
+  • while the grange refuses every request: nothing keeps up what it said before;
+  • before the grange has answered for the first time: a viewer started while it is down
+    still has the tailnet's devices to show, but what the grange holds has never been read.
 """
 from __future__ import annotations
 
@@ -45,6 +49,7 @@ SAID = 28                                        # room for "busy → waiting fo
 NAME = 40                                        # the most of an agent's name that is shown
 WHO = 7                                          # a grange's name beside a change
 ROLL_MIN = 4                                     # the least of a first agent's name worth showing cut
+NEVER_ANSWERED = "not known: your grange has not answered yet"
 
 
 def look(state: str, mine: bool) -> tuple:
@@ -159,8 +164,9 @@ def draw(snap: Snapshot, label: str, gid: Optional[str], w: int, h: int) -> list
     """The pane as lines of Text, title first, for a pane w wide and h high. `gid` None is
     every grange's news; a grange id is that grange's agents and its own changes, under
     `label` (its column's name)."""
-    if snap.refusing:                                 # nothing it said before is known to be true now
-        head = _title("farm news", GRANGE_DOWN)
+    unknown = GRANGE_DOWN if snap.refusing else None if snap.ever_reached else NEVER_ANSWERED
+    if unknown:                                       # no board to draw from: neither news nor "no news"
+        head = _title("farm news", unknown)
         head.truncate(w, overflow="ellipsis")
         return [head]
     me = snap.me.gid

@@ -413,7 +413,9 @@ class GrangeViz(App):
 
     def farm_news(self, w: int, h: int) -> list:
         """The farm news for the pane's size: every grange's while your own column is picked,
-        one grange's while its column is. Nothing until the grange has answered once."""
+        one grange's while its column is. Nothing while there is no column to draw; with
+        columns from the tailnet alone, before the grange has answered once, news.draw says
+        that the news is not known."""
         if not self.columns:
             return []
         sel = next((c for c in self.columns if c.key == self.view.sel_key), None)

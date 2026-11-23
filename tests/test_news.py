@@ -230,6 +230,24 @@ def test_while_the_grange_refuses_everything_no_agent_is_drawn():
         assert plain(news.draw(snap, label, gid, 120, 8)) == ["farm news  not known: your grange is not running"]
 
 
+def test_before_the_grange_has_ever_answered_nothing_is_said_of_what_it_holds():
+    """Started while the grange is down, the viewer still has the tailnet's devices as
+    columns. With no board ever read, 'no farm has reported a change' and 'your grange holds
+    no record of it' would both be claims about a grange that has said nothing."""
+    snap = today([healthy("alice")], reachable=False, ever_reached=False, unreachable_for=4.0)
+    for label, gid in (("", None), ("alice", "alice")):
+        assert plain(news.draw(snap, label, gid, 120, 8)) == ["farm news  not known: your grange has not answered yet"]
+    assert news.draw(snap, "", None, 30, 8)[0].cell_len <= 30
+
+
+def test_a_grange_that_answered_and_then_went_quiet_keeps_its_last_news():
+    """Not reachable now is another thing than never reached: the last picture is still drawn."""
+    snap = snap_with(CHANGES, {"alice": [Agent("pr-7 docs", "busy")]})
+    snap.reachable, snap.unreachable_for = False, 6.0
+    assert "went off the board · expired" in plain(news.draw(snap, "", None, 120, 8))[1]
+    assert plain(news.draw(snap, "alice", "alice", 120, 8))[0] == "alice's farm  1 agent now:  ● pr-7 docs"
+
+
 def test_the_tip_says_what_the_marks_mean_and_where_it_comes_from():
     tip = news.tip().plain
     assert all(mark in tip for mark in "+−◐●○✕") and "GET /v1/agents" in tip and "made up" not in tip

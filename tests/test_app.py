@@ -342,6 +342,37 @@ async def test_before_the_grange_has_ever_answered_it_waits():
 
 
 @drive
+async def test_started_while_the_grange_is_down_the_farm_news_claims_nothing():
+    """The sidecar still lists the tailnet's devices, so there are columns, and one can be
+    picked. Of a board that has never been read the pane says only that it is not known:
+    not that no farm reported a change, nor that the grange holds no record of the one
+    picked. Once the grange answers, it is the news."""
+    from model import Agent
+    device = healthy("alice")
+    device.record = None                                           # known to the tailnet, and no more than that
+    source = Scripted(Snapshot(reachable=False, ever_reached=False, unreachable_for=4.0, port=17981,
+                               has_sidecar=True, peers=[device]))
+    app = main.GrangeViz(source, live=False)
+    async with app.run_test(size=(150, 46)) as pilot:
+        await pilot.pause()
+        assert [c.name for c in app.columns if c.key != "me"] == ["alice"], "the devices are drawn"
+        assert "nothing has answered yet" in text_of(app, "#diag")
+        assert text_of(app, "#news") == "farm news  not known: your grange has not answered yet"
+        await pilot.press("right")
+        await pilot.pause()
+        assert app.view.sel_key != "me"
+        assert text_of(app, "#news") == "farm news  not known: your grange has not answered yet"
+        screen = "\n".join(screen_of(app))
+        assert "no record of it" not in screen and "reported a change" not in screen
+        up = today([healthy("alice")])
+        up.farms, up.farm_watched = {"alice": [Agent("pr-7 docs", "busy")]}, 2.0
+        source.snap = up
+        app.tick()
+        await pilot.pause()
+        assert text_of(app, "#news").splitlines()[0] == "alice's farm  1 agent now:  ● pr-7 docs"
+
+
+@drive
 async def test_the_tip_under_the_pointer_follows_it():
     app = main.GrangeViz(DemoSource(start=165.0), live=False)
     async with app.run_test(size=(150, 46)) as pilot:

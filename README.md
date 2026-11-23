@@ -174,8 +174,9 @@ one answer of `GET /v1/agents` to the next while the app was open. A grange that
 yours or a teammate's, ends and starts nobody: until its farm reports again, what that farm
 says is not known, and only what really changed meanwhile is news. A grange that joins is
 told when its farm is first heard, with its agents. While your grange is not running the pane
-shows no agents at all, like the rows above it. A long diagnosis takes the rows it needs
-first.
+shows no agents at all, like the rows above it. Opened before your grange has answered for
+the first time, it says only that the news is not known: no board has been read, so it
+cannot say that there was no news. A long diagnosis takes the rows it needs first.
 
 ### The verdicts
 
