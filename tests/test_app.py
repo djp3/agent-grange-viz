@@ -227,6 +227,37 @@ async def test_a_long_diagnosis_keeps_its_rows_and_the_farm_news_gets_what_is_le
         assert not any(line.startswith(" farm news") for line in lines)
 
 
+@drive
+async def test_no_control_character_from_an_agents_name_reaches_the_terminal():
+    """From the grange's answer to what the window writes out: a name with a line break takes
+    one row, and an escape sequence in a name or a state is not there."""
+    from live import LiveSource
+    from standins import FakeGrange, entry
+    grange = FakeGrange("djp3")
+    try:
+        grange.set_granges([entry("alice", agents=[("ok", "busy")])])
+        source = LiveSource(port=grange.port, use_docker=False, agents_wait=0)
+        source.poll_api()
+        grange.set_granges([entry("alice", agents=[("ok", "busy"), ("line one\nline two", "busy"),
+                                                   ("red\x1b]0;owned\x07 name", "id\x1b[31mle")])])
+        source.poll_api()
+        app = main.GrangeViz(source, live=False)
+        async with app.run_test(size=(150, 46)) as pilot:
+            await pilot.pause()
+            pane = text_of(app, "#news").splitlines()
+            assert len(pane) == 3, "its title, and one row for each of the two that started"
+            assert sum("+ line one line two" in row for row in pane[1:]) == 1
+            assert sum("+ red]0;owned name" in row for row in pane[1:]) == 1
+            written = "".join(segment.text for strip in app.screen._compositor.render_strips() for segment in strip)
+            assert not any(ch < " " or "\x7f" <= ch <= "\x9f" for ch in written), "nothing but what the app drew"
+            await pilot.press("right")
+            await pilot.pause()
+            written = "".join(segment.text for strip in app.screen._compositor.render_strips() for segment in strip)
+            assert "id[31mle" in written and not any(ch < " " or "\x7f" <= ch <= "\x9f" for ch in written)
+    finally:
+        grange.close()
+
+
 TIME_OF_DAY = re.compile(r"\b\d{1,2}:\d\d(:\d\d)?\b")
 
 
@@ -308,6 +339,37 @@ async def test_before_the_grange_has_ever_answered_it_waits():
         assert "waiting for the grange on 127.0.0.1:17981" in text_of(app, "#grid")
         assert "is the grange running" in text_of(app, "#head")
         assert text_of(app, "#news") == "" and app.query_one("#news").tooltip is None
+
+
+@drive
+async def test_started_while_the_grange_is_down_the_farm_news_claims_nothing():
+    """The sidecar still lists the tailnet's devices, so there are columns, and one can be
+    picked. Of a board that has never been read the pane says only that it is not known:
+    not that no farm reported a change, nor that the grange holds no record of the one
+    picked. Once the grange answers, it is the news."""
+    from model import Agent
+    device = healthy("alice")
+    device.record = None                                           # known to the tailnet, and no more than that
+    source = Scripted(Snapshot(reachable=False, ever_reached=False, unreachable_for=4.0, port=17981,
+                               has_sidecar=True, peers=[device]))
+    app = main.GrangeViz(source, live=False)
+    async with app.run_test(size=(150, 46)) as pilot:
+        await pilot.pause()
+        assert [c.name for c in app.columns if c.key != "me"] == ["alice"], "the devices are drawn"
+        assert "nothing has answered yet" in text_of(app, "#diag")
+        assert text_of(app, "#news") == "farm news  not known: your grange has not answered yet"
+        await pilot.press("right")
+        await pilot.pause()
+        assert app.view.sel_key != "me"
+        assert text_of(app, "#news") == "farm news  not known: your grange has not answered yet"
+        screen = "\n".join(screen_of(app))
+        assert "no record of it" not in screen and "reported a change" not in screen
+        up = today([healthy("alice")])
+        up.farms, up.farm_watched = {"alice": [Agent("pr-7 docs", "busy")]}, 2.0
+        source.snap = up
+        app.tick()
+        await pilot.pause()
+        assert text_of(app, "#news").splitlines()[0] == "alice's farm  1 agent now:  ● pr-7 docs"
 
 
 @drive

@@ -176,7 +176,8 @@ class Event:
 
 @dataclass(frozen=True)
 class Agent:
-    """One agent as its farm reports it (GET /v1/agents)."""
+    """One agent as its farm reports it (GET /v1/agents). Both words were typed on another
+    Mac: a source hands them on as one line each, with no control character (fmt.one_line)."""
     name: str
     state: str                           # agent-farm's words are busy · waiting · idle; a grange
                                          # passes any word on as it came (R4.1)
@@ -216,7 +217,8 @@ class Snapshot:
     events: list = field(default_factory=list)       # [Event], oldest first, the last five minutes
     strangers: list = field(default_factory=list)    # [Event]: refusals of sources that are no peer
     farms: dict = field(default_factory=dict)        # grange id -> [Agent], for every grange on the
-                                                     # board, this Mac's included
+                                                     # board, this Mac's included; None for one whose
+                                                     # farm has not reported since its grange started
     farm_news: list = field(default_factory=list)    # [FarmChange], oldest first
     farm_watched: Optional[float] = None             # how long answers have been compared; None: not yet
     docker: Docker = field(default_factory=Docker)

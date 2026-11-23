@@ -147,6 +147,16 @@ class FakeGrange:
             self.health["cursor"] = self.picture["cursor"]
             self._cond.notify_all()
 
+    def restart(self, incarnation: int, others=()) -> None:
+        """make up: a new incarnation, the cursor from 1 (R5.8), and nothing heard from its own
+        farm yet. A grange that has just started lists its farm with nobody in it and no farm
+        age, until the farm next pushes (set_farm)."""
+        with self._cond:
+            self.picture["granges"] = [entry(self.gid, seen=0.0, farm=None, agents=0)] + list(others)
+            self.picture["cursor"] = self.health["cursor"] = 1
+            self.picture["incarnation"] = self.health["incarnation"] = incarnation
+            self._cond.notify_all()
+
     def set_farm(self, agents) -> None:
         """This grange's own farm reports: its entry's agents, and the cursor moves (R5.6)."""
         with self._cond:

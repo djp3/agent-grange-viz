@@ -53,7 +53,7 @@ from textual.widgets import Static
 import news
 import stack
 from apppaths import APP_NAME, LOG_NAME, app_version, log_dir
-from fmt import age
+from fmt import age, one_line
 from model import DEFAULT_PORT, Snapshot
 from panels import Panel, liveness, tailnet
 from theme import CRIT, DIVIDER, INK, INK2, MUTED, PLANE, RAISED, SURFACE, WAITING
@@ -75,10 +75,9 @@ def title_sequence(title: str) -> str:
 
     The terminal ends the sequence at the first BEL or ESC, and prints what follows into the
     screen. So no control character goes inside it, whatever the version file or the
-    environment held: a line break is written as a space, and the rest are left out."""
-    words = " ".join(title.splitlines())
-    clean = "".join(ch for ch in words if not (ch < " " or "\x7f" <= ch <= "\x9f"))
-    return f"\x1b]0;{clean}\x07"
+    environment held: a line break is written as a space, and the rest are left out
+    (fmt.one_line, which the names of other people's agents go through too)."""
+    return f"\x1b]0;{one_line(title)}\x07"
 
 
 def clear_title_left_behind(app, out) -> None:
@@ -414,7 +413,9 @@ class GrangeViz(App):
 
     def farm_news(self, w: int, h: int) -> list:
         """The farm news for the pane's size: every grange's while your own column is picked,
-        one grange's while its column is. Nothing until the grange has answered once."""
+        one grange's while its column is. Nothing while there is no column to draw; with
+        columns from the tailnet alone, before the grange has answered once, news.draw says
+        that the news is not known."""
         if not self.columns:
             return []
         sel = next((c for c in self.columns if c.key == self.view.sel_key), None)
