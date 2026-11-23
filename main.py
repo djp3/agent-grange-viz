@@ -13,11 +13,14 @@ One window, read top to bottom:
   column. Hovering any cell says what it shows, what its mark means and where it comes from.
 - The diagnosis: every column that breaks or degrades, in plain words; enter opens the
   selected column's full values beside it.
+- The farm news (news.py): what the farms reported, as it reached this grange. An agent
+  started or ended, one began waiting, went busy or went idle, a grange came onto the board
+  or went off it. Every grange's with your own column picked, one grange's with its column.
 
 It reads and never writes: GET /health, /v1/agents and /version on the grange's local port,
 and, when allowed, `tailscale status` and `tailscale ping` in the sidecar through the Docker
-socket. It shows no agent's name or state and no pull request: those are agent-farm's and
-agent-frolic's.
+socket. It shows no pull request: those are agent-frolic's. Agents appear in one place, the
+farm news, by name and state, as GET /v1/agents serves them; the log never names one.
 
     python main.py                 the grange on 127.0.0.1:7788 (settings: grange_port)
     python main.py --port 17981    another port
@@ -44,9 +47,10 @@ from typing import Optional
 from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal
+from textual.containers import Horizontal, Vertical
 from textual.widgets import Static
 
+import news
 import stack
 from apppaths import APP_NAME, LOG_NAME, app_version, log_dir
 from fmt import age
@@ -164,7 +168,9 @@ class GrangeViz(App):
     #grid {{ height: auto; }}
     Tooltip {{ max-width: 64; background: {RAISED}; color: {INK2}; border: round {DIVIDER}; padding: 0 1; }}
     #bottom {{ height: 1fr; border-top: solid {DIVIDER}; }}
-    #diag {{ width: 1fr; padding: 0 1; }}
+    #left {{ width: 1fr; }}
+    #diag {{ width: 1fr; height: auto; padding: 0 1; }}
+    #news {{ width: 1fr; height: 1fr; padding: 0 1; margin-top: 1; }}
     #detail {{ width: 58; padding: 0 1; background: {SURFACE}; display: none; }}
     #foot {{ height: 1; padding: 0 1; color: {MUTED}; }}
     """
@@ -193,7 +199,9 @@ class GrangeViz(App):
             yield Panel(lambda w, h: self.panel(tailnet, "tailnet", w, h), id="tailnet")
         yield GridView(lambda key: stack.tip_for(self.shown, self.columns, key), self.action_scroll_cols, id="grid")
         with Horizontal(id="bottom"):
-            yield Static(id="diag")
+            with Vertical(id="left"):                 # the diagnosis takes the rows it needs, the news the rest
+                yield Static(id="diag")
+                yield Panel(self.farm_news, id="news")
             yield Static(id="detail")
         yield Static(id="foot")
 
@@ -247,7 +255,8 @@ class GrangeViz(App):
 
     @staticmethod
     def note_changes(before: Snapshot, now: Snapshot) -> None:
-        """The log gets what changed about reaching the grange and its sidecar, never who is on the board."""
+        """The log gets what changed about reaching the grange and its sidecar, never who is on
+        the board, nor any agent the farm news shows."""
         if now.demo:
             return
         if before.reachable != now.reachable or before.ever_reached != now.ever_reached:
@@ -311,7 +320,7 @@ class GrangeViz(App):
         self.set_window_title(window_title(bound_nodes(snap)))
         down = not snap.reachable
         dim = 0.35 if down and (self.columns or snap.peers) else 1.0
-        for wid in ("#liveness", "#tailnet", "#grid"):
+        for wid in ("#liveness", "#tailnet", "#grid", "#news"):
             w = self.query_one(wid)
             if w.styles.text_opacity != dim:
                 w.styles.text_opacity = dim
@@ -342,6 +351,9 @@ class GrangeViz(App):
                                                stack.diagnosis(self.columns, snap, diag_width))
         sel = next((c for c in self.columns if c.key == self.view.sel_key), None)
         self.query_one("#detail", Static).update(stack.detail(sel) if sel else Text(""))
+        pane = self.query_one("#news")
+        if (pane.tooltip is None) == bool(self.columns):     # it has a tip for as long as it has anything to show
+            pane.tooltip = news.tip(snap.demo) if self.columns else None
         self.query_one("#foot", Static).update(self.foot())
 
     def head(self, width: int) -> Text:
@@ -399,6 +411,15 @@ class GrangeViz(App):
         if not self.columns:
             return [Text(title, style=f"bold {MUTED}"), Text("  nothing to show yet", style=MUTED)]
         return draw(self.shown, w, h)
+
+    def farm_news(self, w: int, h: int) -> list:
+        """The farm news for the pane's size: every grange's while your own column is picked,
+        one grange's while its column is. Nothing until the grange has answered once."""
+        if not self.columns:
+            return []
+        sel = next((c for c in self.columns if c.key == self.view.sel_key), None)
+        mine = sel is None or sel.key == "me"
+        return news.draw(self.shown, "" if mine else sel.label, None if mine else sel.name, w, h)
 
     def waiting(self) -> Text:
         """The grid's place before the grange has ever answered."""
@@ -505,7 +526,8 @@ def selfcheck() -> int:
             if not app.columns or any(len(c.cells) != len(stack.LAYERS) for c in app.columns):
                 return "the Stack has no columns"
             shown = "\n".join(strip.text for strip in app.screen._compositor.render_strips())
-            missing = [word for word in ("headscale", "tailnet", "gossip", "record", "farm", "verdict", "diagnosis")
+            missing = [word for word in ("headscale", "tailnet", "gossip", "record", "farm", "verdict", "diagnosis",
+                                         "farm news")
                        if word not in shown]
             return f"not drawn: {', '.join(missing)}" if missing else ""
 

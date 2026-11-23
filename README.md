@@ -54,12 +54,20 @@ The Dock, Mission Control and the window switcher show it too.
 Hover any cell: the exact numbers, what its mark means, and where the data comes from. Hover a
 row's name for the key to that row.
 
-### It only reads. It shows no agents and no pull requests.
+### What the farms are saying, as it arrives
 
-Which agents are at work is [agent-farm](https://github.com/djp3/agent-farm)'s to show, and
-which pull request each is on is [agent-frolic](https://github.com/djp3/agent-frolic)'s. This
-app shows the plane between them: at most a count of agents per grange, never a name or a
-state. It never pushes anything to the grange, and it changes nothing in Docker.
+Under the diagnosis is the farm news: what each grange's farm reported, newest first, with how
+long ago it reached your grange. An agent started or ended, one began waiting for its human,
+went busy or went idle, a teammate's grange came onto the board or went off it and took its
+agents along. Pick a teammate's column and it becomes that grange's agents by name, and its
+own changes.
+
+### It only reads
+
+It never pushes anything to the grange, and it changes nothing in Docker. Watching your own
+agents is still [agent-farm](https://github.com/djp3/agent-farm)'s job, and which pull request
+each one is on is [agent-frolic](https://github.com/djp3/agent-frolic)'s: this app shows the
+plane between them, and in the farm news what travelled over it.
 
 ## Install
 
@@ -113,6 +121,8 @@ Under the title bar, from top to bottom:
 - **The diagnosis**: every column that breaks or degrades, in plain words. Something only
   you can fix is yellow. Sources that are no teammate at all (a device without the grange's
   tag, refused by the identity check) are listed here too.
+- **The farm news**, in the rows left under the diagnosis: what each grange's farm reported,
+  newest first. [Below](#the-farm-news).
 
 The title bar reads 🐓 agent-grange-viz and its version, then one 📡 for each teammate's
 grange that is bound and whose record yours still holds, up to ten, so the Dock, Mission
@@ -137,6 +147,30 @@ headscale, ✗ the grange cannot reach its socket, or it is logged out. While yo
 cannot answer, every other tailnet cell is last known, and greys out to say so.
 
 A cell that reads `· not known` is one nothing can vouch for: its tip says why.
+
+### The farm news
+
+Each line is one thing a farm reported, with how long ago it reached your grange, whose farm
+it was (`you` for your own), a mark, the agent, and what happened:
+
+| mark | what happened |
+|------|---------------|
+| `+` | an agent started, or a grange came onto the board with its agents |
+| `−` | an agent ended |
+| `◐` | an agent began waiting for its human; yellow when it is one of yours, waiting for you |
+| `●` | an agent went busy |
+| `○` | an agent went idle |
+| `✕` | a grange went off the board, and its agents with it: it expired, or it left |
+
+The marks are agent-farm's. With your own column picked the pane holds every grange's news;
+pick another column (← →) and it holds that grange's agents now, by name, those waiting
+first, and then its own changes. A window wide enough shows the news in two or three columns,
+read downward.
+
+The grange keeps no history, so the news starts when the app does: it is what changed from
+one answer of `GET /v1/agents` to the next while the app was open. When your grange restarts,
+the board filling up again is not news. While it is not running the pane shows no agents at
+all, like the rows above it. A long diagnosis takes the rows it needs first.
 
 ### The verdicts
 
@@ -164,7 +198,7 @@ In a narrow column a verdict is cut to fit: `t/o`, `refuse`, `503`, `gone`, `far
 
 | key | action |
 |-----|--------|
-| ← → | pick a column |
+| ← → | pick a column; the farm news follows it |
 | shift+← shift+→, the wheel, the trackpad | scroll the columns when they do not all fit (yours stays pinned) |
 | enter | open or close the selected column's full values, beside the diagnosis |
 | t | order the columns by role, or by address (the order the gossip ring walks) |
@@ -200,6 +234,7 @@ Docker, it shows:
 - the **headscale** row and the **tailnet** row (the sidecar's `tailscale status` and `ping`);
 - the **record** row's bar (how long since each record was refreshed);
 - the **farm** row (farm age, the stale flag, the agent count);
+- the **farm news** (each farm's agents by name and state, as `GET /v1/agents` lists them);
 - your own column, the liveness and tailnet panels, and the screens for a grange that cannot
   be reached or is not running.
 
@@ -246,9 +281,9 @@ work. Each of the other three works without it:
   know on to each other over a private network.
 - **[agent-frolic](https://github.com/djp3/agent-frolic)** puts it on the pull requests:
   whose agents are on which one, beside who each pull request waits on.
-- **agent-grange-viz** watches the plane the other three depend on. It shows no agents and no
-  pull requests, only whether each grange can be reached, by what path, how fresh its record
-  is, and what was refused.
+- **agent-grange-viz** watches the plane the other three depend on: whether each grange can
+  be reached, by what path, how fresh its record is, what was refused, and what the farms
+  reported as it arrived. It shows no pull requests.
 
 ```
    your Mac                                       a teammate's Mac
@@ -270,7 +305,7 @@ Run from a checkout, both stay next to the code instead (`settings.json`, `logs/
 by git. **Viewer ▸ Open Log Folder** and **Reveal Settings File** open them.
 
 The log records what changed about reaching the grange and its sidecar, why anything failed,
-and any crash; never who is on the board. If the viewer inside the window ever stops, the
+and any crash; never who is on the board, nor any agent's name. If the viewer inside the window ever stops, the
 window says so and **Viewer ▸ Restart Viewer** (⌘R) starts it again.
 
 The settings file holds three things, and no secret (the app has none):

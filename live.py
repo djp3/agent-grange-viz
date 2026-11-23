@@ -30,6 +30,11 @@ What it works out for itself, having no history to ask for: a record that disapp
 back is a "readmit", a first appearance a "join"; a path that changes between direct and DERP,
 and a sidecar that changes state, are events too. Events are kept five minutes.
 
+The farm news is worked out the same way. Every answer of /v1/agents is the whole board, each
+grange's agents by name and state, so one answer is compared with the next (farms.py): an
+agent that started, one that ended, one whose state changed, a grange that came onto the
+board or went off it. Only what changed while this source was reading is known.
+
 snapshot() only reads what the threads cached and works every age out as of now, so ages tick
 between reads. When nothing answers, the last picture is kept and its ages stop where they
 were: the view freezes and dims it.
@@ -37,8 +42,8 @@ were: the view freezes and dims it.
 When the image is out of date, every route answers 503 and the grange gossips with nobody
 (R5.16). That is an answer, so the grange is reachable; but nothing keeps up what it said
 before, and a record whose age stands still reads as live. So the Snapshot then holds none of
-it, whichever route it came from: no record, no farm, no gossip, no count. It holds that the
-image is stale and for how long, and what the sidecar still says through Docker.
+it, whichever route it came from: no record, no farm, no agent, no gossip, no count. It holds
+that the image is stale and for how long, and what the sidecar still says through Docker.
 
 The poll_*() methods each do one round and are what the threads loop on; tests call them
 directly with a clock of their own.
@@ -51,8 +56,9 @@ from collections import deque
 from typing import Callable, Optional
 
 import sidecar as sidecar_mod
+from farms import Watch
 from grangeapi import ApiError, GrangeApi, Unreachable
-from model import (DEFAULT_PORT, EXPIRE_S, FORGET_S, GOSSIP_PORT, Docker, Event, Gone, Gossip, Me, Peer,
+from model import (DEFAULT_PORT, EXPIRE_S, FORGET_S, GOSSIP_PORT, Agent, Docker, Event, Gone, Gossip, Me, Peer,
                    Record, Sidecar, Snapshot, Tailnet)
 
 EVENTS_S = 300.0                         # how long an event is kept
@@ -144,6 +150,7 @@ class LiveSource:
         self._paths: dict = {}                       # ip -> direct · derp
         self._events: deque = deque()                # (at, kind, peer, ok, status, note)
         self._baseline_until = now                   # appearances before this are not news
+        self._farms = Watch()                        # what the farms say, one answer against the next
 
     # ------------------------------------------------------------------ model.Source
     def start(self) -> None:
@@ -285,6 +292,7 @@ class LiveSource:
                 self._baseline_until = now + 5.0     # the board refilling is not news,
                 self._held.clear()                   # and what the old board held did not "leave"
                 self._seen.clear()
+                self._farms.forget()                 # nor did its agents end
             me = body.get("grange")
             before = set(self._held)
             present = {}
@@ -292,8 +300,10 @@ class LiveSource:
                 if g.get("grange") != me:
                     present[g.get("grange")] = g
             quiet = first or now < self._baseline_until
+            why = {}                                 # for the farm news: how a grange came or went
             for gid in sorted(present.keys() - before):
                 self._held[gid] = now
+                why[gid] = "back on the board" if gid in self._known else "first record"
                 if not quiet:
                     kind = "readmit" if gid in self._known else "join"
                     self._back[gid] = (kind, now)
@@ -304,6 +314,7 @@ class LiveSource:
             for gid in sorted(before - present.keys()):
                 seen_age, at = self._seen.get(gid, (0.0, now))
                 kind = "expired" if seen_age + (now - at) >= EXPIRED_NEAR else "left"
+                why[gid] = kind
                 self._gone[gid] = (kind, now)
                 self._held.pop(gid, None)
                 self._back.pop(gid, None)
@@ -311,6 +322,10 @@ class LiveSource:
                             f"seen {seen_age + (now - at):.0f}s ago" if kind == "expired" else "its record was withdrawn")
             for gid, g in present.items():
                 self._seen[gid] = (float(g.get("seen_age_s") or 0.0), now)
+            self._farms.take({g.get("grange"): [Agent(str(a.get("name") or "?"), str(a.get("state") or "?"))
+                                                for a in g.get("agents") or () if isinstance(a, dict)]
+                              for g in body.get("granges") or () if g.get("grange")},
+                             now, quiet=quiet, why=why)
             self._picture, self._picture_at = body, now
             self._cursor, self._incarnation = cursor, incarnation
             return restarted
@@ -408,6 +423,11 @@ class LiveSource:
                           self._peers_joined(now, pic_extra, status_fresh, records=not stale))
             snap.events = [Event(now - at, kind, peer, ok, status, note)
                            for at, kind, peer, ok, status, note in self._events if now - at <= EVENTS_S]
+            if not stale:                             # as of the picture: its ages stop where it froze
+                as_of = self._frozen_at or now
+                snap.farms = self._farms.board()
+                snap.farm_news = self._farms.news(as_of)
+                snap.farm_watched = None if self._farms.since is None else as_of - self._farms.since
             if snap.has_mesh:                         # refusals of sources that are no discovered address
                 extra = (self._frozen_at or now) - self._mesh_at
                 snap.strangers = [Event(_plus(r.get("last_age_s") or 0.0, extra), "refused", r.get("source") or "?",

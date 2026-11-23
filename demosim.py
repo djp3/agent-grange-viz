@@ -44,8 +44,9 @@ The scenario loops every LOOP seconds (times are seconds into the loop):
   196  this Mac's sidecar container stops: 127.0.0.1:7788 goes with it, so nothing can read
        the grange; make up at 211 recreates both containers (new incarnation, cursor from 1)
 
-The code below is the design mock-ups' simulation, kept as it was: the same seed plays the
-same events.
+The code below is the design mock-ups' simulation, kept as it was but for one thing: who the
+agents are. It only counted them; each farm now also has its sessions by name and state, made
+up from a generator of their own (farm_rng), so the same seed still plays the same events.
 """
 from __future__ import annotations
 
@@ -63,6 +64,15 @@ FANOUT, HEARTBEAT, REPAIR_S, DISCOVERY_S = 5, 10.0, 3.0, 30.0
 EXPIRE_S, FARM_STALE_S, FORGET_S, CONNECT_TIMEOUT = 60.0, 60.0, 600.0, 1.0
 LOOP = 240.0
 START = 100.0                    # where the demo starts, so there is history to draw
+
+# ---- who the agents are: made up, in the shape of agent-farm's session names -------------------
+PROJECTS = ("web", "api", "infra", "docs", "ios", "billing")
+TASKS = ("fix tests", "docs", "refactor", "login bug", "release", "flaky ci", "migration", "onboarding",
+         "perf probe", "review", "search index", "export", "dark mode", "rate limiter", "nightly", "lint",
+         "cache layer", "i18n", "upgrade deps", "telemetry", "retry logic", "invoice pdf", "a11y pass",
+         "webhooks", "feature flag", "db backup")
+STATES = ("busy", "waiting", "idle")                 # agent-farm's words; a grange passes any word on (R4.1)
+MOVES = {"busy": ("waiting", "idle", "idle"), "waiting": ("busy",), "idle": ("busy",)}
 
 
 # ---- R6.10, exactly as grange/gossip.py does it ------------------------------------------------
@@ -101,6 +111,7 @@ class G:
     last_farm: float = 0.0
     farm_stale: bool = False
     hb_phase: float = 0.0
+    roster: list = field(default_factory=list)   # its farm's sessions, (name, state): as many as `agents`
 
     @property
     def ip(self) -> str:
@@ -142,6 +153,7 @@ class Rec:
     farm_stale: bool
     agents: int
     first_at: float              # when this incarnation was first accepted
+    roster: tuple = ()           # the agents in the body last accepted, (name, state)
 
 
 @dataclass
@@ -241,11 +253,14 @@ class Me:
     farm_pushes: int = 0
     longpolls: int = 1           # frolic's long-poll held open
     last_gossip: Optional[float] = None
+    roster: list = field(default_factory=list)   # this Mac's farm's sessions, (name, state)
 
 
 class Sim:
     def __init__(self, seed: int = 7):
         self.rng = random.Random(seed)
+        self.farm_rng = random.Random(f"farms {seed}")   # who the agents are; never the events' generator
+        self._pr = 40                    # the last made-up pull request number
         self.now = 0.0
         self._q: list = []
         self._seq = 0
@@ -253,6 +268,8 @@ class Sim:
                             hb_phase=(o * 1.37) % HEARTBEAT)
                      for gid, o, w, a, ms, rel in TEAM}
         self.me = Me()
+        for farm in (self.me, *(g for g in self.team.values() if g.gid != ME)):
+            farm.roster = [(self._session(), self.farm_rng.choices(STATES, (5, 1, 4))[0]) for _ in range(farm.agents)]
         self.records: dict = {}
         self.forget: dict = {}
         self.links: dict = {}            # addr -> Link
@@ -284,7 +301,7 @@ class Sim:
             if g.gid == ME or not g.present:
                 continue
             self.records[g.gid] = Rec(g.gid, g.incarnation, g.counter, g.rev, 0.0, 5.0, False,
-                                      g.agents, -3600.0)
+                                      g.agents, -3600.0, tuple(g.roster))
         self._discover(quiet=True)
         for link in self.links.values():
             link.gid = link.hostname[len("grange-"):]
@@ -379,6 +396,26 @@ class Sim:
         ga, gb = self.team[a], self.team[b]
         ms = ga.access_ms + gb.access_ms + (DERP_MS if (ga.relayed or gb.relayed) else 0.0)
         return ms / 1000.0
+
+    def _session(self) -> str:
+        """A made-up session name no farm has yet: project, pull request, what it is about."""
+        self._pr += self.farm_rng.randrange(1, 9)
+        return f"{self.farm_rng.choice(PROJECTS)}-pr-{self._pr} {self.farm_rng.choice(TASKS)}"
+
+    def _farm_says(self, roster: list, agents: int) -> None:
+        """A farm's report changed and it now counts `agents`. When the count stayed as it was,
+        and half the time anyway, one of its sessions changes state; then they are brought to
+        that many: one starts, or an idle one ends. Only farm_rng is drawn from."""
+        rng = self.farm_rng
+        if roster and (len(roster) == agents or rng.random() < 0.5):
+            i = rng.randrange(len(roster))
+            name, state = roster[i]
+            roster[i] = (name, rng.choice(MOVES[state]))
+        while len(roster) < agents:
+            roster.append((self._session(), "busy"))
+        while len(roster) > agents:
+            idle = [i for i, (_, state) in enumerate(roster) if state == "idle"]
+            roster.pop(rng.choice(idle) if idle else rng.randrange(len(roster)))
 
     def digest_bytes(self) -> int:
         return 48 + 52 * (len(self.records) + 1)
@@ -656,7 +693,7 @@ class Sim:
             if gid in self.forget:
                 del self.forget[gid]
             self.records[gid] = Rec(gid, g.incarnation, g.counter, g.rev, self.now,
-                                    self.now - g.last_farm, g.farm_stale, g.agents, self.now)
+                                    self.now - g.last_farm, g.farm_stale, g.agents, self.now, tuple(g.roster))
             self.me.cursor += 1
             self._changes.add(gid)
             if kind == "new" and fg is None and gid in ("carol",):
@@ -670,7 +707,7 @@ class Sim:
             r.incarnation, r.rev, r.counter = g.incarnation, g.rev, g.counter
             r.seen_at = self.now
             r.farm_age_at_seen = self.now - g.last_farm
-            r.farm_stale, r.agents = g.farm_stale, g.agents
+            r.farm_stale, r.agents, r.roster = g.farm_stale, g.agents, tuple(g.roster)
             if restarted:
                 r.first_at = self.now
                 self.log(Ev(self.now, "restart", gid, note=f"new incarnation, via {source}"))
@@ -741,6 +778,7 @@ class Sim:
             self.me.cursor += 1
             self.me.last_farm = self.now
             self.me.agents = max(1, min(9, self.me.agents + self.rng.choice((-1, 1))))
+            self._farm_says(self.me.roster, self.me.agents)
             self.log(Ev(self.now, "farm", ME, note=f"farm: {self.me.agents} agent(s), content change, rev {self.me.rev}"))
             self.reach = {}
             self.reach_rev = self.me.rev
@@ -756,6 +794,7 @@ class Sim:
         g.counter += 1
         g.last_farm = self.now
         g.agents = max(0, min(9, g.agents + self.rng.choice((-1, 0, 1))))
+        self._farm_says(g.roster, g.agents)
         self._spread(gid)
 
     def _spread(self, origin: str) -> None:

@@ -37,8 +37,8 @@ info:
       already holds or can count locally; no new field crosses the tailnet, and gossip
       behaves exactly as before.
     - **Privacy.** In `/v1/mesh` an agent list appears as a count only, never as
-      `owner`/`name`/`state`. The viewer has no need for them; `/v1/agents` remains the one
-      place they are served.
+      `owner`/`name`/`state`: `/v1/agents` remains the one place they are served, and it is
+      where the viewer's farm news reads names and states.
     - **While the image is stale** (the kill-switch tag moved, R5.16) every route, the
       proposed ones included, answers `503` with the body in `StaleImage`,
       `Connection: close` and `Retry-After: 60`.

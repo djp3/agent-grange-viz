@@ -109,6 +109,124 @@ async def test_a_grange_that_refuses_everything_is_said_to_be_not_running():
         assert "━" in text_of(app, "#grid") and "djp3" in text_of(app, "#head")
 
 
+# ---- the farm news, under the diagnosis --------------------------------------------------------------
+def screen_of(app) -> list:
+    return [strip.text for strip in app.screen._compositor.render_strips()]
+
+
+@pytest.mark.parametrize("size", [(150, 46), (120, 36), (190, 60), (230, 70)])
+@drive
+async def test_the_farm_news_is_under_the_diagnosis(size):
+    app = main.GrangeViz(DemoSource(start=165.0), live=False)
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        lines = screen_of(app)
+        diagnosis = next(i for i, line in enumerate(lines) if line.startswith(" diagnosis"))
+        title = next(i for i, line in enumerate(lines) if line.startswith(" farm news"))
+        assert title > diagnosis and lines[title - 1].strip() == "", "below it, after a blank line"
+        newest = app.snap.farm_news[-1]
+        assert newest.name in lines[title + 1] and lines[title + 1].split()[0] == "4s"
+        assert len(lines) - 1 - title >= 4, "its title and at least three rows, above the keys"
+        assert all(len(line) <= size[0] for line in lines)
+
+
+@drive
+async def test_picking_a_column_shows_that_granges_agents_and_its_own_news():
+    app = main.GrangeViz(DemoSource(start=165.0), live=False)
+    async with app.run_test(size=(150, 46)) as pilot:
+        await pilot.pause()
+        assert text_of(app, "#news").startswith("farm news")
+        await pilot.press("right")
+        picked = app.columns[1]
+        pane = text_of(app, "#news").splitlines()
+        agents = app.snap.farms[picked.name]
+        assert pane[0].startswith(f"{picked.label}'s farm  {len(agents)} agents now:")
+        assert all(a.name in pane[0] for a in agents)
+        others = {a.name for gid, farm in app.snap.farms.items() if gid != picked.name for a in farm}
+        assert not any(name in "\n".join(pane) for name in others), "nobody else's"
+        await pilot.press("left")
+        assert text_of(app, "#news").startswith("farm news")
+
+
+@drive
+async def test_the_detail_pane_opens_beside_the_farm_news():
+    app = main.GrangeViz(DemoSource(start=165.0), live=False)
+    async with app.run_test(size=(150, 46)) as pilot:
+        await pilot.pause()
+        wide = app.query_one("#news").size.width
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.query_one("#detail").display and app.query_one("#news").size.width == wide - 58
+        title = next(line for line in screen_of(app) if line.startswith(" farm news"))
+        assert "long-poll" in title, "the detail's rows run on beside it, to the right"
+        assert all(t.cell_len <= wide - 58 for t in app.farm_news(wide - 58, 9)), "and the news keeps to its side"
+
+
+@drive
+async def test_the_farm_news_says_what_it_is_under_the_pointer():
+    app = main.GrangeViz(DemoSource(start=165.0), live=False)
+    async with app.run_test(size=(150, 46)) as pilot:
+        await pilot.pause()
+        tip = app.query_one("#news").tooltip
+        assert "GET /v1/agents" in tip.plain and "made up" in tip.plain
+    app = main.GrangeViz(Scripted(today([healthy("alice")])), live=False)
+    async with app.run_test(size=(150, 46)) as pilot:
+        await pilot.pause()
+        assert "made up" not in app.query_one("#news").tooltip.plain
+
+
+@drive
+async def test_the_farm_news_shows_no_agent_while_the_grange_refuses_everything():
+    from model import Agent, FarmChange
+    snap = today([healthy("alice")])
+    snap.farms = {"alice": [Agent("pr-7 docs", "busy")]}
+    snap.farm_news = [FarmChange(3.0, "alice", "started", name="pr-7 docs", after="busy")]
+    source = Scripted(snap)
+    app = main.GrangeViz(source, live=False)
+    async with app.run_test(size=(150, 46)) as pilot:
+        await pilot.pause()
+        assert "pr-7 docs" in text_of(app, "#news")
+        stopped = not_running([healthy("alice")])                  # a source that hands the farms on anyway
+        stopped.farms, stopped.farm_news = snap.farms, snap.farm_news
+        source.snap = stopped
+        app.tick()
+        await pilot.pause()
+        assert text_of(app, "#news") == "farm news  not known: your grange is not running"
+        assert "pr-7 docs" not in "\n".join(screen_of(app))
+
+
+@drive
+async def test_the_farm_news_freezes_and_dims_with_the_rest_when_nothing_answers():
+    source = Scripted(DemoSource(start=165.0).snapshot())
+    app = main.GrangeViz(source, live=False)
+    async with app.run_test(size=(150, 46)) as pilot:
+        await pilot.pause()
+        newest = text_of(app, "#news").splitlines()[1][:60]
+        assert newest.split()[0] == "4s" and app.query_one("#news").styles.text_opacity == 1
+        source.snap = DemoSource(start=203.0).snapshot()
+        app.tick()
+        await pilot.pause()
+        assert text_of(app, "#news").splitlines()[1][:60] == newest, "the last picture stays, its ages where they were"
+        assert app.query_one("#news").styles.text_opacity < 1
+
+
+@drive
+async def test_a_long_diagnosis_keeps_its_rows_and_the_farm_news_gets_what_is_left():
+    """Where it breaks comes first. Twelve broken columns in a short window leave the news no
+    row, and nothing is drawn over the diagnosis or the keys."""
+    from model import Record
+    broken = [healthy(f"peer{i}") for i in range(12)]
+    for i, peer in enumerate(broken):
+        peer.key = peer.address = f"100.64.0.{20 + i}:7789"
+        peer.record = Record(seen_age=3.0, farm_age=200.0, farm_stale=True, agents=1)
+    app = main.GrangeViz(Scripted(today(broken)), live=False)
+    async with app.run_test(size=(150, 36)) as pilot:
+        await pilot.pause()
+        lines = screen_of(app)
+        assert sum("farm_stale" in line for line in lines) >= 5 and "quit" in lines[-1]
+        assert not any(line.startswith(" farm news") for line in lines)
+
+
 TIME_OF_DAY = re.compile(r"\b\d{1,2}:\d\d(:\d\d)?\b")
 
 
@@ -189,6 +307,7 @@ async def test_before_the_grange_has_ever_answered_it_waits():
         assert not app.columns
         assert "waiting for the grange on 127.0.0.1:17981" in text_of(app, "#grid")
         assert "is the grange running" in text_of(app, "#head")
+        assert text_of(app, "#news") == "" and app.query_one("#news").tooltip is None
 
 
 @drive
