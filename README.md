@@ -164,8 +164,10 @@ it was (`you` for your own), a mark, the agent, and what happened:
 
 The marks are agent-farm's. With your own column picked the pane holds every grange's news;
 pick another column (← →) and it holds that grange's agents now, by name, those waiting
-first, and then its own changes. A window wide enough shows the news in two or three columns,
-read downward.
+first, and then its own changes. Where the line cannot hold them all it ends with how many
+more there are. A farm may report a state that is none of those three: such an agent is
+drawn with `·`, and the state in words, as in `· pr-7 docs (compacting)`. A window wide enough
+shows the news in two or three columns, read downward.
 
 The grange keeps no history, so the news starts when the app does: it is what changed from
 one answer of `GET /v1/agents` to the next while the app was open. A grange that restarts,

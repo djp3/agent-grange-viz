@@ -119,8 +119,55 @@ def test_a_state_that_is_not_one_of_agent_farms_words_is_passed_on_as_it_came():
     change = FarmChange(3.0, "alice", "state", name="pr-7 docs", before="busy", after="compacting")
     line = plain(news.draw(snap_with([change], {"alice": [Agent("pr-7 docs", "compacting")]}), "", None, 100, 4))[1]
     assert " ".join(line.split()) == "3s alice · pr-7 docs busy → compacting"
-    assert "· pr-7 docs" in news.draw(snap_with(farms={"alice": [Agent("pr-7 docs", "compacting")]}),
-                                      "alice", "alice", 100, 4)[0].plain
+    assert news.draw(snap_with(farms={"alice": [Agent("pr-7 docs", "compacting")]}), "alice", "alice", 100, 4)[0].plain \
+        == "alice's farm  1 agent now:  · pr-7 docs (compacting)", "one grange's agents now: the word, since no mark says it"
+
+
+# ---- one grange's agents now: the roll call ---------------------------------------------------------
+def roll_call(agents, w=100) -> str:
+    return news.draw(snap_with(farms={"alice": list(agents)}), "alice", "alice", w, 4)[0].plain
+
+
+def test_the_roll_call_says_a_state_in_words_only_where_no_mark_says_it():
+    head = roll_call([Agent("pr-7 docs", "busy"), Agent("pr-9 lint", "compacting"), Agent("pr-11 tests", "idle"),
+                      Agent("pr-12 ci", "waiting")], w=120)
+    assert head == "alice's farm  4 agents now:  ◐ pr-12 ci  ● pr-7 docs  ○ pr-11 tests  · pr-9 lint (compacting)"
+
+
+def test_the_state_in_words_counts_toward_what_fits():
+    """Two agents whose names would both fit, were the word not there."""
+    from rich.cells import cell_len
+    agents = [Agent("pr-7 docs", "compacting"), Agent("pr-9 lint", "compacting")]
+    assert roll_call(agents, w=79) == "alice's farm  2 agents now:  · pr-7 docs (compacting)  · pr-9 lint (compacting)"
+    head = roll_call(agents, w=78)
+    assert head == "alice's farm  2 agents now:  · pr-7 docs (compacting)  +1 more" and cell_len(head) <= 78
+
+
+@pytest.mark.parametrize("w", [60, 80, 100, 137, 180])
+def test_wide_names_in_the_roll_call_leave_the_count_in_view(w):
+    """A name in Japanese takes twice the cells it has characters. Counted in characters, too
+    many were let onto the line, and what ran off its end was the count of the rest."""
+    from rich.cells import cell_len
+    head = roll_call([Agent(f"{WIDE * 3} {i}", "busy") for i in range(6)], w=w)
+    shown = head.count("●")
+    assert cell_len(head) <= w and 1 <= shown < 6, head
+    assert head.endswith(f"+{6 - shown} more"), "every agent is on the line or in the count"
+
+
+def test_a_first_name_too_long_for_the_line_is_cut_not_left_out():
+    """Left out, the line read '2 agents now:  +2 more' and named nobody."""
+    from rich.cells import cell_len
+    head = roll_call([Agent("x" * 150, "busy"), Agent("pr-2 short", "idle")])
+    assert head.startswith("alice's farm  2 agents now:  ● xxxx") and head.endswith("x…  +1 more") and cell_len(head) == 100
+    alone = roll_call([Agent(WIDE * 20, "waiting")])
+    assert alone.startswith(f"alice's farm  1 agent now:  ◐ {WIDE}") and alone.endswith("…") and cell_len(alone) <= 100
+    assert all(ch in WIDE + "…" for ch in alone.split("◐ ")[1]), "and no wide character is cut through"
+
+
+def test_only_the_first_is_ever_cut_and_a_line_with_no_room_for_it_counts_everyone():
+    head = roll_call([Agent("pr-1 short", "busy"), Agent("x" * 150, "busy"), Agent("pr-3 short", "idle")])
+    assert head == "alice's farm  3 agents now:  ● pr-1 short  +2 more"
+    assert roll_call([Agent("pr-1 short", "busy"), Agent("pr-2 short", "busy")], w=40) == "alice's farm  2 agents now:  +2 more"
 
 
 def test_a_long_name_is_cut_and_a_long_grange_id_too():

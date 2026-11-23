@@ -44,11 +44,12 @@ COLUMN = 72                                      # a column of changes is at lea
 SAID = 28                                        # room for "busy → waiting for its human"
 NAME = 40                                        # the most of an agent's name that is shown
 WHO = 7                                          # a grange's name beside a change
+ROLL_MIN = 4                                     # the least of a first agent's name worth showing cut
 
 
 def look(state: str, mine: bool) -> tuple:
     """(mark, style) for a state. Any other word than agent-farm's three is passed on as it
-    came (R4.1) and gets no mark of its own."""
+    came (R4.1) and gets no mark of its own: where it is drawn, the word is beside it."""
     if state == "waiting":
         return "◐", WAITING if mine else f"bold {INK}"
     return {"busy": ("●", GOOD), "idle": ("○", INK2)}.get(state, ("·", MUTED))
@@ -113,8 +114,17 @@ def _title(title: str, subtitle: str) -> Text:
     return t
 
 
+def _named(agent) -> str:
+    """An agent in the roll call. A mark says busy, waiting or idle; any other state has no
+    mark of its own, so it is said in words beside the name."""
+    return agent.name if agent.state in ORDER else f"{agent.name} ({agent.state})"
+
+
 def _now(label: str, farms: dict, gid: str, mine: bool, w: int) -> Text:
-    """One grange's title: its agents now, those waiting first, as many as the line holds."""
+    """One grange's title, its roll call: its agents now, those waiting first, as many as the
+    line holds and then how many more there are. The count is never pushed off the line: every
+    agent is measured in cells, with room kept for the count. The first is cut rather than
+    left out, so that a farm with agents never shows none of them."""
     t = Text(no_wrap=True)
     t.append(f"{one_line(label)}'s farm", style=f"bold {INK2}")
     if gid not in farms:
@@ -130,14 +140,18 @@ def _now(label: str, farms: dict, gid: str, mine: bool, w: int) -> Text:
     t.append(f"  {len(agents)} agent{'' if len(agents) == 1 else 's'} now:", style=MUTED)
     rest = sorted(agents, key=lambda a: ORDER.get(a.state, 3))       # stable: the farm's own order within a tier
     for i, agent in enumerate(rest):
-        more = len(rest) - i - 1
-        room = w - t.cell_len - (len(f"  +{more} more") if more else 0)
-        if 4 + len(agent.name) > room:
-            t.append(f"  +{more + 1} more", style=MUTED)
-            break
+        more = len(rest) - i - 1                                     # those after this one
+        room = w - t.cell_len - 4 - (cell_len(f"  +{more} more") if more else 0)
+        named = _named(agent)
+        if cell_len(named) > room:
+            if i or room < ROLL_MIN:                                 # not the first, or no room for any of it
+                t.append(f"  +{more + 1} more", style=MUTED)
+                break
+            named = _cut(named, room)
         mark, style = look(agent.state, mine)
         t.append(f"  {mark} ", style=style)
-        t.append(agent.name, style=INK2)
+        t.append(named[:len(agent.name)], style=INK2)
+        t.append(named[len(agent.name):], style=MUTED)               # its state in words, where no mark says it
     return t
 
 
