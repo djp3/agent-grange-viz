@@ -17,8 +17,10 @@ then down the next when the window is wide enough for two or three.
 With your own column picked it is every grange's news. With another picked (← →) it is that
 grange's agents now, by name, and then its own changes.
 
-The marks are agent-farm's: ● busy, ◐ waiting, ○ idle. ◐ is yellow only for an agent of
-your own farm, since yellow means one thing in this app: yours to act on, on this Mac.
+The marks are agent-farm's: ● busy, ◐ waiting, ○ idle. Yellow means one thing in this app:
+yours to act on, now, on this Mac. So ◐ is yellow only for an agent of your own farm, and only
+while that agent still waits: once it is busy or idle again, or has ended, its row is what
+happened and no longer something to do, and its ◐ is the plain one a teammate's has.
 
 `draw` is a function of a model.Snapshot, the column picked and a size; main.py's window puts
 it in a panels.Panel. It draws what Snapshot.farms and Snapshot.farm_news hold and works
@@ -52,17 +54,18 @@ ROLL_MIN = 4                                     # the least of a first agent's 
 NEVER_ANSWERED = "not known: your grange has not answered yet"
 
 
-def look(state: str, mine: bool) -> tuple:
-    """(mark, style) for a state. Any other word than agent-farm's three is passed on as it
-    came (R4.1) and gets no mark of its own: where it is drawn, the word is beside it."""
+def look(state: str, yours: bool) -> tuple:
+    """(mark, style) for a state; `yours` where it is yours to act on now. Any other word than
+    agent-farm's three is passed on as it came (R4.1) and gets no mark of its own: where it is
+    drawn, the word is beside it."""
     if state == "waiting":
-        return "◐", WAITING if mine else f"bold {INK}"
+        return "◐", WAITING if yours else f"bold {INK}"
     return {"busy": ("●", GOOD), "idle": ("○", INK2)}.get(state, ("·", MUTED))
 
 
-def mark_of(c: FarmChange, mine: bool) -> tuple:
+def mark_of(c: FarmChange, yours: bool) -> tuple:
     if c.kind == "state":
-        return look(c.after, mine)
+        return look(c.after, yours)
     return {"started": ("+", f"bold {INK}"), "on": ("+", f"bold {INK}"),
             "ended": ("−", MUTED), "off": ("✕", MUTED)}.get(c.kind, ("·", MUTED))
 
@@ -94,10 +97,26 @@ def _field(text: str, width: int) -> str:
     return cut + " " * (width + 1 - cell_len(cut))
 
 
-def line(c: FarmChange, me: str, who: bool, name_w: int) -> Text:
-    """One change: its age, whose farm (when `who`), its mark, the agent and what happened."""
+def yours_now(snap: Snapshot) -> set:
+    """The changes that are still yours to act on, by id(): for each agent of your own farm
+    that waits now, the newest change that says it began to. So there are never more of them
+    than agents of yours waiting. While your farm has not reported (None), which of them wait
+    is not known, and none is."""
+    me = snap.me.gid
+    waiting = {a.name for a in snap.farms.get(me) or () if a.state == "waiting"}
+    out = set()
+    for c in reversed(snap.farm_news):                # newest first
+        if c.grange == me and c.kind == "state" and c.after == "waiting" and c.name in waiting:
+            waiting.discard(c.name)                   # an older wait of the same agent is over
+            out.add(id(c))
+    return out
+
+
+def line(c: FarmChange, me: str, who: bool, name_w: int, yours: bool = False) -> Text:
+    """One change: its age, whose farm (when `who`), its mark, the agent and what happened.
+    `yours` where it is still yours to act on (yours_now): its mark is the yellow one."""
     mine = c.grange == me
-    mark, style = mark_of(c, mine)
+    mark, style = mark_of(c, yours)
     t = Text(no_wrap=True)
     t.append(f"{short_age(c.age):>4}  ", style=MUTED)
     if who:
@@ -192,7 +211,8 @@ def draw(snap: Snapshot, label: str, gid: Optional[str], w: int, h: int) -> list
     fixed = 6 + (WHO + 1 if gid is None else 0) + 2 + 1          # age, whose, mark, the gap after the name
     longest = max((cell_len(c.name) for c in shown), default=0)  # no wider than the names in view need
     name_w = max(12, min(longest, NAME, each - 2 - fixed - SAID))
-    cells = [line(c, me, gid is None, name_w) for c in shown]
+    act = yours_now(snap) if gid is None else ()                 # another grange's waits are not yours
+    cells = [line(c, me, gid is None, name_w, id(c) in act) for c in shown]
     for row in range(min(rows, len(cells))):
         t = Text(no_wrap=True)
         for cell in cells[row::rows]:
@@ -212,7 +232,7 @@ def tip(demo: bool = False) -> Text:
     t.append(" · what each grange's farm reported, with how long ago it reached your grange\n", style=INK2)
     for mark, style, what in (("+", f"bold {INK}", "an agent started, or a grange came onto the board"),
                               ("−", MUTED, "an agent ended"),
-                              ("◐", f"bold {INK}", "one began waiting for its human (yellow: for you)"),
+                              ("◐", f"bold {INK}", "one began waiting for its human (yellow: yours, and still waiting for you)"),
                               ("●", GOOD, "one went busy"), ("○", INK2, "one went idle"),
                               ("✕", MUTED, "a grange went off the board, and its agents with it")):
         t.append(f"{mark} ", style=style)
@@ -224,4 +244,4 @@ def tip(demo: bool = False) -> Text:
     return t
 
 
-__all__ = ["draw", "tip", "look", "mark_of", "said", "line"]
+__all__ = ["draw", "tip", "look", "mark_of", "said", "line", "yours_now"]

@@ -157,7 +157,7 @@ it was (`you` for your own), a mark, the agent, and what happened:
 |------|---------------|
 | `+` | an agent started, or a grange came onto the board with its agents |
 | `−` | an agent ended |
-| `◐` | an agent began waiting for its human; yellow when it is one of yours, waiting for you |
+| `◐` | an agent began waiting for its human; yellow while it is one of yours and still waiting for you |
 | `●` | an agent went busy |
 | `○` | an agent went idle |
 | `✕` | a grange went off the board, and its agents with it: it expired, or it left |

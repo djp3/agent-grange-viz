@@ -43,11 +43,76 @@ def test_every_granges_news_newest_first_in_words():
         "1m bob + 2 agents came onto the board · first record"]
 
 
+def yellow(lines) -> list:
+    """The rows drawn with the yellow mark, as words."""
+    return [" ".join(t.plain.split()) for t in lines if any(WAITING in str(span.style) for span in t.spans)]
+
+
+WAITS = {"djp3": [Agent("viz-pr-9 farm news", "waiting")],
+         "alice": [Agent("pr-7 docs", "waiting"), Agent("pr-11 tests", "busy")]}
+
+
 def test_yellow_is_only_for_an_agent_of_your_own_farm():
-    """Yellow means one thing in this app: yours to act on, on this Mac."""
-    lines = news.draw(snap_with(CHANGES), "", None, 100, 10)
-    yellow = [t.plain.split()[1] for t in lines if any(WAITING in str(span.style) for span in t.spans)]
-    assert yellow == ["you"]
+    """Yellow means one thing in this app: yours to act on, on this Mac. Alice's agent waits
+    too, for her."""
+    assert yellow(news.draw(snap_with(CHANGES, WAITS), "", None, 100, 10)) == [
+        "12s you ◐ viz-pr-9 farm news busy → waiting for you"]
+
+
+# ---- yellow is for now: a wait that is over is what happened, not what to do ---------------------------
+def mine(age, name, before, after):
+    return FarmChange(age, "djp3", "state", name=name, before=before, after=after)
+
+
+@pytest.mark.parametrize("after", ["busy", "idle"])
+def test_a_wait_that_you_answered_is_no_longer_yellow(after):
+    """It began waiting, you answered it, and it went on. The old row kept its yellow, and
+    after an hour the pane held a dozen of them with nothing waiting at all."""
+    changes = [mine(40.0, "viz-pr-9 farm news", "busy", "waiting"), mine(4.0, "viz-pr-9 farm news", "waiting", after)]
+    lines = news.draw(snap_with(changes, {"djp3": [Agent("viz-pr-9 farm news", after)]}), "", None, 100, 10)
+    assert yellow(lines) == []
+    assert " ".join(lines[2].plain.split()) == "40s you ◐ viz-pr-9 farm news busy → waiting for you", \
+        "what happened is still told as it happened"
+
+
+def test_a_wait_whose_agent_ended_is_no_longer_yellow():
+    changes = [mine(40.0, "viz-pr-9 farm news", "busy", "waiting"),
+               FarmChange(4.0, "djp3", "ended", name="viz-pr-9 farm news", before="waiting")]
+    assert yellow(news.draw(snap_with(changes, {"djp3": []}), "", None, 100, 10)) == []
+
+
+def test_of_an_agent_that_waited_more_than_once_only_the_newest_wait_is_yellow():
+    changes = [mine(90.0, "viz-pr-9 farm news", "busy", "waiting"), mine(60.0, "viz-pr-9 farm news", "waiting", "busy"),
+               mine(7.0, "viz-pr-9 farm news", "busy", "waiting")]
+    lines = news.draw(snap_with(changes, {"djp3": [Agent("viz-pr-9 farm news", "waiting")]}), "", None, 100, 10)
+    assert yellow(lines) == ["7s you ◐ viz-pr-9 farm news busy → waiting for you"]
+
+
+def test_there_are_never_more_yellow_rows_than_agents_of_yours_waiting_now():
+    changes = [mine(90.0, "a", "busy", "waiting"), mine(80.0, "b", "busy", "waiting"), mine(70.0, "c", "idle", "waiting"),
+               mine(60.0, "a", "waiting", "busy"), mine(50.0, "a", "busy", "waiting"), mine(40.0, "c", "waiting", "idle")]
+    farm = {"djp3": [Agent("a", "waiting"), Agent("b", "waiting"), Agent("c", "idle"), Agent("d", "waiting")]}
+    assert yellow(news.draw(snap_with(changes, farm), "", None, 100, 10)) == [
+        "50s you ◐ a busy → waiting for you", "1m you ◐ b busy → waiting for you"], "d began before the viewer did"
+
+
+@pytest.mark.parametrize("farms", [{}, {"djp3": None}], ids=["no record of your farm", "your farm has not reported"])
+def test_while_what_your_agents_are_doing_is_not_known_nothing_is_yellow(farms):
+    """Your grange has just restarted: for up to 30 s it has not heard from your farm. A row
+    is yellow because an agent waits now, and that is not known."""
+    assert yellow(news.draw(snap_with([mine(12.0, "viz-pr-9 farm news", "busy", "waiting")], farms), "", None, 100, 10)) == []
+
+
+def test_in_the_demo_a_row_is_yellow_exactly_where_an_agent_of_yours_still_waits():
+    seen = 0
+    for t in range(0, 600, 20):
+        snap = DemoSource(start=float(t)).snapshot()
+        waiting = {a.name for a in snap.farms[snap.me.gid] if a.state == "waiting"}
+        began = {c.name for c in snap.farm_news if c.grange == snap.me.gid and c.kind == "state" and c.after == "waiting"}
+        rows = yellow(news.draw(snap, "", None, 100, 250))
+        assert len(rows) == len(waiting & began) and all(any(name in row for name in waiting) for row in rows), t
+        seen += len(rows)
+    assert seen, "the demo does show one: this test tests something"
 
 
 @pytest.mark.parametrize("w, h", [(40, 3), (72, 4), (98, 6), (148, 9), (228, 23), (300, 40)])
