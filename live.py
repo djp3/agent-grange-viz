@@ -59,6 +59,7 @@ from typing import Callable, Optional
 
 import sidecar as sidecar_mod
 from farms import Watch
+from fmt import one_line
 from grangeapi import ApiError, GrangeApi, Unreachable
 from model import (DEFAULT_PORT, EXPIRE_S, FORGET_S, GOSSIP_PORT, Agent, Docker, Event, Gone, Gossip, Me, Peer,
                    Record, Sidecar, Snapshot, Tailnet)
@@ -333,10 +334,14 @@ class LiveSource:
     @staticmethod
     def _reported(g: dict) -> Optional[list]:
         """A grange's agents as its farm last reported them; None while its farm never has
-        (no farm age): the list is empty then because nothing is known, not because nobody is there."""
+        (no farm age): the list is empty then because nothing is known, not because nobody is there.
+
+        A name and a state are words typed on somebody else's Mac, and they are drawn on this
+        one's terminal. Each is made one line with no control character in it here, where it
+        comes in, so no row is broken in two and no escape sequence reaches the terminal."""
         if g.get("farm_age_s") is None:
             return None
-        return [Agent(str(a.get("name") or "?"), str(a.get("state") or "?"))
+        return [Agent(one_line(a.get("name") or "") or "?", one_line(a.get("state") or "") or "?")
                 for a in g.get("agents") or () if isinstance(a, dict)]
 
     # ------------------------------------------------------------------ one round of the sidecar

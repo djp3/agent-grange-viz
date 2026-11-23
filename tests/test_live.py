@@ -527,6 +527,23 @@ def test_an_agent_reported_without_a_name_or_a_state_does_not_break_the_reading(
     assert [(a.name, a.state) for a in src.snapshot().farms["alice"]] == [("?", "?"), ("7", "?")]
 
 
+def test_names_and_states_come_in_as_one_line_with_no_control_character(grange):
+    """They were typed on somebody else's Mac and are drawn on this one's terminal. A line
+    break would split a row of the pane; an escape sequence would be an order to the terminal."""
+    grange.set_granges([entry("alice", agents=[("line one\nline two", "busy"),
+                                               ("red\x1b]0;owned\x07 name", "id\x1b[31mle"),
+                                               ("\x1b\x07", "\n")])])
+    src, clock = source(grange)
+    src.poll_api()
+    assert [(a.name, a.state) for a in src.snapshot().farms["alice"]] == [
+        ("line one line two", "busy"), ("red]0;owned name", "id[31mle"), ("?", "?")]
+    clock.tick(2)
+    grange.set_granges([entry("alice", agents=[("line one\nline two", "wait\x1bing"),
+                                               ("red\x1b]0;owned\x07 name", "id\x1b[31mle"), ("\x1b\x07", "\n")])])
+    src.poll_api()
+    assert told(src.snapshot()) == [("alice", "state", "line one line two", "busy", "waiting")], "the news likewise"
+
+
 def test_a_corrected_incarnation_is_not_a_restart(grange):
     grange.set_granges([entry("alice")])
     src, _ = source(grange)

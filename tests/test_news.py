@@ -129,6 +129,16 @@ def test_a_long_name_is_cut_and_a_long_grange_id_too():
     assert "lights…" in line and "x" * 39 + "…" in line and "x" * 40 not in line and line.rstrip().endswith("started · busy")
 
 
+def test_a_grange_id_is_drawn_as_one_line_with_no_control_character():
+    """An agent's name is cleaned where it comes in (live.py). A grange's id is drawn in the
+    pane as it stands in the Snapshot, so the pane cleans that one itself."""
+    change = FarmChange(3.0, "ali\x1b[31m\nce", "started", name="pr-7 docs", after="busy")
+    lines = news.draw(snap_with([change], {"ali\x1b[31m\nce": []}), "", None, 100, 4)
+    assert len(lines) == 2 and " ".join(lines[1].plain.split()) == "3s ali[31… + pr-7 docs started · busy"
+    head = news.draw(snap_with(farms={"x": []}), "ali\x1b[31m\nce?", "x", 100, 4)[0].plain
+    assert head == "ali[31m ce?'s farm  reports no agents"
+
+
 def test_while_the_grange_refuses_everything_no_agent_is_drawn():
     """Its image is out of date: nothing keeps up what it said before. Even from a source that
     handed the farms on anyway, the pane says only that it is not known."""

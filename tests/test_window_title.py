@@ -34,6 +34,7 @@ def test_a_title_cannot_end_its_own_escape_early():
         assert inside.endswith("📡📡") and "v0.1.1" in inside
     assert main.title_sequence("v0.1.1\n# a second line") == "\x1b]0;v0.1.1 # a second line\x07"
     assert main.title_sequence("one\r\ntwo\u2028three") == "\x1b]0;one two three\x07"
+    assert main.title_sequence("a\tb") == "\x1b]0;a b\x07"
 
 
 def test_the_title_carries_the_rooster_and_the_version():

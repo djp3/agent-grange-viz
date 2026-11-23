@@ -55,6 +55,15 @@ def size(n: float) -> str:
     return f"{n / 1_000_000:.1f}M"
 
 
+def one_line(text: str) -> str:
+    """Words that came from somewhere else (a session's name typed on a teammate's Mac, a
+    version file), made safe to put on one line of a terminal: a line break or a tab is
+    written as a space and every other control character is left out. So nothing in them can
+    end a row, or tell the terminal to do anything."""
+    words = " ".join(str(text).replace("\t", " ").splitlines())
+    return "".join(ch for ch in words if not (ch < " " or "\x7f" <= ch <= "\x9f"))
+
+
 def fit(width: int, *variants: str) -> str:
     """The first variant that fits, else the last one cut."""
     for v in variants:

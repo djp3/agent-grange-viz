@@ -31,7 +31,7 @@ from typing import Optional
 
 from rich.text import Text
 
-from fmt import age, short_age
+from fmt import age, one_line, short_age
 from model import FarmChange, Snapshot
 from stack import GRANGE_DOWN
 from theme import GOOD, INK, INK2, MUTED, WAITING
@@ -82,7 +82,7 @@ def line(c: FarmChange, me: str, who: bool, name_w: int) -> Text:
     t = Text(no_wrap=True)
     t.append(f"{short_age(c.age):>4}  ", style=MUTED)
     if who:
-        t.append(f"{'you' if mine else _cut(c.grange, WHO):<{WHO + 1}}", style=INK2)
+        t.append(f"{'you' if mine else _cut(one_line(c.grange), WHO):<{WHO + 1}}", style=INK2)
     t.append(f"{mark} ", style=style)
     if c.kind in ("on", "off"):
         t.append(said(c, mine), style=INK2 if c.kind == "on" else MUTED)
@@ -103,7 +103,7 @@ def _title(title: str, subtitle: str) -> Text:
 def _now(label: str, farms: dict, gid: str, mine: bool, w: int) -> Text:
     """One grange's title: its agents now, those waiting first, as many as the line holds."""
     t = Text(no_wrap=True)
-    t.append(f"{label}'s farm", style=f"bold {INK2}")
+    t.append(f"{one_line(label)}'s farm", style=f"bold {INK2}")
     if gid not in farms:
         t.append("  not on the board: your grange holds no record of it", style=MUTED)
         return t

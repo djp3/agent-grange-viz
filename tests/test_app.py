@@ -227,6 +227,37 @@ async def test_a_long_diagnosis_keeps_its_rows_and_the_farm_news_gets_what_is_le
         assert not any(line.startswith(" farm news") for line in lines)
 
 
+@drive
+async def test_no_control_character_from_an_agents_name_reaches_the_terminal():
+    """From the grange's answer to what the window writes out: a name with a line break takes
+    one row, and an escape sequence in a name or a state is not there."""
+    from live import LiveSource
+    from standins import FakeGrange, entry
+    grange = FakeGrange("djp3")
+    try:
+        grange.set_granges([entry("alice", agents=[("ok", "busy")])])
+        source = LiveSource(port=grange.port, use_docker=False, agents_wait=0)
+        source.poll_api()
+        grange.set_granges([entry("alice", agents=[("ok", "busy"), ("line one\nline two", "busy"),
+                                                   ("red\x1b]0;owned\x07 name", "id\x1b[31mle")])])
+        source.poll_api()
+        app = main.GrangeViz(source, live=False)
+        async with app.run_test(size=(150, 46)) as pilot:
+            await pilot.pause()
+            pane = text_of(app, "#news").splitlines()
+            assert len(pane) == 3, "its title, and one row for each of the two that started"
+            assert sum("+ line one line two" in row for row in pane[1:]) == 1
+            assert sum("+ red]0;owned name" in row for row in pane[1:]) == 1
+            written = "".join(segment.text for strip in app.screen._compositor.render_strips() for segment in strip)
+            assert not any(ch < " " or "\x7f" <= ch <= "\x9f" for ch in written), "nothing but what the app drew"
+            await pilot.press("right")
+            await pilot.pause()
+            written = "".join(segment.text for strip in app.screen._compositor.render_strips() for segment in strip)
+            assert "id[31mle" in written and not any(ch < " " or "\x7f" <= ch <= "\x9f" for ch in written)
+    finally:
+        grange.close()
+
+
 TIME_OF_DAY = re.compile(r"\b\d{1,2}:\d\d(:\d\d)?\b")
 
 

@@ -176,7 +176,8 @@ class Event:
 
 @dataclass(frozen=True)
 class Agent:
-    """One agent as its farm reports it (GET /v1/agents)."""
+    """One agent as its farm reports it (GET /v1/agents). Both words were typed on another
+    Mac: a source hands them on as one line each, with no control character (fmt.one_line)."""
     name: str
     state: str                           # agent-farm's words are busy · waiting · idle; a grange
                                          # passes any word on as it came (R4.1)
