@@ -5,6 +5,7 @@ or reading every pipe in them: a compile judged by a search of what it printed, 
 whose reader leaves early. Both end a script under `set -euo pipefail` with nothing said.
 (agent-frolic's tests, where the same scripts had the same faults.)"""
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -106,3 +107,31 @@ def test_no_pipe_in_the_scripts_can_end_one_of_them_unheard():
         for line in lines:
             assert not leaves_early(line), f"{script.name}: `{leaves_early(line)}` may leave early: {line.strip()[:90]}"
     assert looked_at >= 5
+
+
+# ---- what a build leaves behind ---------------------------------------------------------------------
+def git(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, text=True)
+
+
+needs_a_checkout = pytest.mark.skipif(shutil.which("git") is None or not (ROOT / ".git").exists(),
+                                      reason="not a git checkout")
+
+
+@needs_a_checkout
+def test_nothing_a_build_leaves_behind_is_committed():
+    """SwiftPM makes a .build wherever a swift command is run. Only macos/.build/ was ignored,
+    so one run at the top of a checkout left files that `git add -A` would have committed (it
+    happened in agent-frolic)."""
+    tracked = git("ls-files").stdout.splitlines()
+    left_behind = [path for path in tracked
+                   if any(part in (".build", "build", "dist", "__pycache__") for part in Path(path).parts[:-1])]
+    assert left_behind == []
+
+
+@needs_a_checkout
+@pytest.mark.parametrize("path", [".build/CACHEDIR.TAG", "macos/.build/workspace-state.json", "build/swift-build.log",
+                                  "dist/agent-grange-viz.app/Contents/Info.plist", "tests/__pycache__/x.pyc",
+                                  "scripts/.build/debug/x"])
+def test_a_builds_folders_are_ignored_wherever_they_turn_up(path):
+    assert git("check-ignore", "-q", path).returncode == 0, f"{path} would be picked up by `git add -A`"
