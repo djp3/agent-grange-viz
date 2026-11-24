@@ -17,7 +17,7 @@ It works alongside [agent-farm](https://github.com/djp3/agent-farm),
 **[Download for Mac](https://github.com/djp3/agent-grange-viz/releases/latest)** · macOS 27+ on
 Apple silicon · free and open source
 
-![agent-grange-viz on a made-up team of thirteen granges: the liveness and tailnet panels, a column for each grange with three of them breaking at gossip and one at its farm, and the diagnosis underneath](docs/screenshot.png)
+![agent-grange-viz on a made-up team of thirteen granges: the liveness and tailnet panels, a column for each grange with three of them breaking at gossip and one at its farm, the diagnosis underneath, and under that the farm news: what each grange's farm reported, newest first](docs/screenshot.png)
 
 ### Where it breaks is where the column turns red
 
