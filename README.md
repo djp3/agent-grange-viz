@@ -123,6 +123,8 @@ Under the title bar, from top to bottom:
   tag, refused by the identity check) are listed here too.
 - **The farm news**, in the rows left under the diagnosis: what each grange's farm reported,
   newest first. [Below](#the-farm-news).
+- **The bar at the foot**: the [keys](#keys), each one lit beside what it does, and at the
+  far end what a column's three marks mean.
 
 The title bar reads 🐓 agent-grange-viz and its version, then one 📡 for each teammate's
 grange that is bound and whose record yours still holds, up to ten, so the Dock, Mission
@@ -213,6 +215,13 @@ In a narrow column a verdict is cut to fit: `t/o`, `refuse`, `503`, `gone`, `far
 
 In the demo also: space pauses, `e` jumps to the next scripted moment, `+` and `-` change the
 speed.
+
+The bar at the foot of the window lists the keys the way agent-farm's and agent-frolic's do:
+the key lit, what it does beside it, and `q Quit` last. `t` reads `By address` or `By role`,
+whichever order it would change to. At the far end the bar says what the marks mean
+(`● holds ◐ degraded ✗ breaks`), and in the demo that the data is made up. A window too
+narrow for all of it loses that note first and then the keys least needed. `q Quit` always
+stays.
 
 The View menu changes the text size (⌘+ / ⌘-), picks any fixed-pitch font installed on the
 Mac, and toggles font smoothing; the window remembers all of that with its size and place.

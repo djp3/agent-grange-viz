@@ -8,7 +8,14 @@ meanings for two of them.
   • the status colors go on marks only, never on words;
   • WAITING (agent-farm's golden yellow) means one thing: yours to fix, on this Mac;
   • DIVIDER (agent-farm's divider blue) is every rule and line, and nothing else;
-  • DIRECT and RELAYED are the tailnet path: straight between two sidecars, or through DERP.
+  • DIRECT and RELAYED are the tailnet path: straight between two sidecars, or through DERP;
+  • KEY is the key in a hint at the foot of the window ("q" in "q Quit"), and nothing else.
+    It is agent-frolic's, for agent-frolic's reason: agent-farm's footer has its keys in
+    orange, and beside these colors that orange is WARN, the amber of a column that is
+    degraded. The cyan stays apart from every status color and from the yellow, for full
+    and for color-blind vision. Its nearest are the ink of words, so a key is bold as well,
+    and DIRECT, the same hue darker, which is only ever a bar or a square in the tailnet
+    panel and never a letter.
 """
 from __future__ import annotations
 
@@ -17,6 +24,7 @@ INK, INK2, MUTED, AXIS = "#f0efec", "#c3c2b7", "#898781", "#383835"
 GOOD, WARN, SERIOUS, CRIT = "#0ca30c", "#fab219", "#ec835a", "#d03b3b"
 WAITING = "#ffd75f"
 DIVIDER = "#0053AA"
+KEY = "#45d3dd"
 UNITS = ("#19a9b0", "#0b6eff", "#9584e5", "#bf2fb9")              # teal, blue, violet, magenta
 DIRECT, RELAYED = UNITS[0], UNITS[2]
 
