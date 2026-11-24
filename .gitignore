@@ -14,5 +14,7 @@ logs/
 # packaging output (scripts/build_app.sh, scripts/release.sh)
 build/
 dist/
-macos/.build/
 macos/Resources/AppIcon.icns
+# SwiftPM's build folder, wherever a swift command was run: macos/.build/ in the ordinary
+# way, and .build/ at the top if one was ever run from there.
+.build/
