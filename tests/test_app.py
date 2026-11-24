@@ -223,7 +223,7 @@ async def test_a_long_diagnosis_keeps_its_rows_and_the_farm_news_gets_what_is_le
     async with app.run_test(size=(150, 36)) as pilot:
         await pilot.pause()
         lines = screen_of(app)
-        assert sum("farm_stale" in line for line in lines) >= 5 and "quit" in lines[-1]
+        assert sum("farm_stale" in line for line in lines) >= 5 and "q Quit" in lines[-1]
         assert not any(line.startswith(" farm news") for line in lines)
 
 

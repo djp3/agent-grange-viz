@@ -50,6 +50,7 @@ from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Static
 
+import hints
 import news
 import stack
 from apppaths import APP_NAME, LOG_NAME, app_version, log_dir
@@ -171,7 +172,7 @@ class GrangeViz(App):
     #diag {{ width: 1fr; height: auto; padding: 0 1; }}
     #news {{ width: 1fr; height: 1fr; padding: 0 1; margin-top: 1; }}
     #detail {{ width: 58; padding: 0 1; background: {SURFACE}; display: none; }}
-    #foot {{ height: 1; padding: 0 1; color: {MUTED}; }}
+    #foot {{ height: 1; padding: 0 1; background: {RAISED}; text-wrap: nowrap; text-overflow: ellipsis; }}
     """
     BINDINGS = [("left", "step(-1)", "column"), ("right", "step(1)", "column"),
                 ("shift+left", "scroll_cols(-1)", "scroll"), ("shift+right", "scroll_cols(1)", "scroll"),
@@ -202,7 +203,7 @@ class GrangeViz(App):
                 yield Static(id="diag")
                 yield Panel(self.farm_news, id="news")
             yield Static(id="detail")
-        yield Static(id="foot")
+        yield hints.Bar(lambda w: hints.foot(self.view.by_address, self.snap.demo, w), id="foot")
 
     def on_mount(self) -> None:
         if self.live:
@@ -353,7 +354,7 @@ class GrangeViz(App):
         pane = self.query_one("#news")
         if (pane.tooltip is None) == bool(self.columns):     # it has a tip for as long as it has anything to show
             pane.tooltip = news.tip(snap.demo) if self.columns else None
-        self.query_one("#foot", Static).update(self.foot())
+        self.query_one("#foot").refresh()             # it draws itself, to the width it has
 
     def head(self, width: int) -> Text:
         snap, me = self.snap, self.shown.me
@@ -428,21 +429,6 @@ class GrangeViz(App):
         t.append(f"   waiting for the grange on 127.0.0.1:{self.snap.port}\n", style=f"bold {INK2}")
         t.append("   it answers GET /health there once it is up: cd docker && make up, in agent-grange\n", style=MUTED)
         t.append("   another port: --port N, or grange_port in the settings · a made-up team: --demo\n", style=MUTED)
-        return t
-
-    def foot(self) -> Text:
-        t = Text()
-        keys = [("←→", "column"), ("⇧←→", "scroll"), ("enter", "detail"),
-                ("t", "by address" if not self.view.by_address else "by role")]
-        if self.snap.demo:
-            keys += [("space", "pause"), ("e", "next moment"), ("+ -", "speed")]
-        keys.append(("q", "quit"))
-        for key, what in keys:
-            t.append(key, style=INK2)
-            t.append(f" {what}  ", style=MUTED)
-        t.append(" ● holds ◐ degraded ✗ breaks", style=MUTED)
-        if self.snap.demo:
-            t.append(" · made-up data", style=MUTED)
         return t
 
 
